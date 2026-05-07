@@ -1,0 +1,152 @@
+## Roo Code가 뭔가요?
+
+**Roo Code**는 VS Code(에디터)에 설치하는 무료 확장입니다. 설치하면 사이드바에
+채팅창이 하나 생기고, 거기에 한국어로 일을 시키면 **현재 열려있는 폴더 안에서**
+파일을 읽고, 코드를 짜고, 명령을 실행해줍니다.
+
+비슷한 도구로 Cursor, Cline, GitHub Copilot Chat 등이 있지만, Roo Code의 장점은:
+
+- **VS Code에 그대로 붙는다** — 별도 에디터 설치 불필요
+- **Ollama 같은 로컬/사내 LLM을 1급 시민으로 지원** — 외부 API 키 없이 사용 가능
+- **모드 전환이 명확** — Code / Architect / Ask / 커스텀 모드를 직접 선택
+
+## 사전 준비
+
+<Callout kind="check" title="시작 전 체크리스트">
+1. **VS Code**가 설치되어 있다 ([code.visualstudio.com](https://code.visualstudio.com))
+2. **사내 Ollama 엔드포인트 주소**를 알고 있다 (예: `http://ollama.your-corp.local:11434`)
+3. 그 엔드포인트에서 **사용할 수 있는 모델 이름**을 알고 있다 (예: `qwen2.5-coder:14b`)
+4. **작업할 폴더**가 하나 정해져 있다 (예: `D:\projects\measurement-cleanup`)
+</Callout>
+
+엔드포인트와 모델 이름은 보통 사내 인프라팀 또는 AI 플랫폼팀에서 안내받습니다. 모르면 먼저 그쪽에 문의하세요.
+
+## 7단계 설치 가이드
+
+### 1) VS Code 열기
+
+처음이라면 [code.visualstudio.com](https://code.visualstudio.com)에서 다운로드 후 설치합니다. 한국어 패치는 첫 실행 시 자동으로 권유됩니다.
+
+### 2) Roo Code 확장 설치
+
+왼쪽 사이드바의 **확장(Extensions)** 아이콘(네모 4개) → 검색창에 `Roo Code` → **Install**.
+
+설치가 끝나면 사이드바에 새 아이콘(캥거루 모양)이 추가됩니다. 클릭하면 채팅창이 열립니다.
+
+### 3) 작업 폴더 열기
+
+상단 메뉴 **파일 → 폴더 열기**로 작업할 폴더를 엽니다.
+**중요**: Roo Code는 "현재 열려있는 폴더"의 파일만 보고 수정합니다.
+회사 비밀자료 폴더를 통째로 열면 그 전부에 접근할 수 있다는 뜻이므로,
+**작업 단위로 폴더를 분리해 두는 습관**이 필요합니다.
+
+### 4) Provider를 Ollama로 설정
+
+Roo Code 채팅창 우상단 **설정(톱니바퀴)** → **Provider** 드롭다운 → `Ollama` 선택.
+
+### 5) Base URL 입력
+
+**Base URL** 칸에 사내 Ollama 엔드포인트를 입력합니다.
+
+<CodeBlock
+  filename="Roo Code → Settings → Provider: Ollama"
+  lang="text"
+  code={`Base URL:  http://ollama.your-corp.local:11434
+              ↑ 사내에서 안내받은 주소를 그대로 입력`}
+/>
+
+<Callout kind="warn" title="끝에 슬래시 붙이지 말 것">
+`http://...:11434/`처럼 마지막에 슬래시(`/`)를 붙이면 일부 환경에서 연결 실패가 납니다.
+주소 끝의 슬래시는 빼주세요.
+</Callout>
+
+### 6) 모델 선택
+
+Base URL이 정상이면 **Model** 드롭다운에 사내에서 미리 받아둔 모델 목록이 표시됩니다. 코드 작업이라면 다음 중 하나를 권장합니다.
+
+| 모델 이름 (예시) | 메모리 | 특성 |
+| --- | --- | --- |
+| `qwen2.5-coder:7b` | 적음 | 가벼움, 단순 작업에 충분 |
+| `qwen2.5-coder:14b` | 중간 | **권장** — 균형 잡힘 |
+| `deepseek-coder-v2:16b` | 중간 | Python 코드 품질 양호 |
+| `llama3.1:70b` | 큼 | 사내 GPU 여유 있을 때 |
+
+목록이 비어있다면 엔드포인트가 잘못되었거나, 모델이 아직 pull되지 않은 상태입니다. 인프라팀에 문의하세요.
+
+### 7) 첫 프롬프트로 연결 확인
+
+채팅창에 다음을 입력해 봅니다.
+
+<CodeBlock
+  lang="text"
+  code={`현재 폴더에 어떤 파일들이 있는지 알려줘.`}
+/>
+
+Roo가 `list_files` 도구를 호출하고 결과를 한국어로 요약해주면 연결 성공입니다.
+
+## 4가지 모드 한눈에 보기
+
+Roo Code 채팅창 하단의 모드 셀렉터에서 전환할 수 있습니다.
+
+<div className="not-prose grid gap-3 sm:grid-cols-2 my-6">
+  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+    <ModeBadge mode="code" />
+    <p className="mt-2 text-sm text-zinc-700">
+      파일을 직접 수정하고 명령을 실행한다. 가장 자주 쓰는 모드.
+    </p>
+  </div>
+  <div className="rounded-lg border border-violet-200 bg-violet-50 p-4">
+    <ModeBadge mode="architect" />
+    <p className="mt-2 text-sm text-zinc-700">
+      코드를 짜기 전에 단계 plan을 만든다. 큰 작업의 출발점.
+    </p>
+  </div>
+  <div className="rounded-lg border border-sky-200 bg-sky-50 p-4">
+    <ModeBadge mode="ask" />
+    <p className="mt-2 text-sm text-zinc-700">
+      파일을 읽고 설명만 한다. 수정은 하지 않는다.
+    </p>
+  </div>
+  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+    <ModeBadge mode="custom" />
+    <p className="mt-2 text-sm text-zinc-700">
+      역할/허용 도구를 직접 정의한 모드. 예제 4에서 다룹니다.
+    </p>
+  </div>
+</div>
+
+## 절대 하지 말 것
+
+<Callout kind="warn" title="사내에서 Roo Code 쓸 때 5가지 금기">
+1. **Auto-approve를 켜둔 채로 자리 비우기** — 위험한 명령이 자동 승인될 수 있습니다.
+2. **루트 폴더(C: 또는 ~) 통째로 열기** — Roo가 의도치 않은 파일까지 건드릴 수 있습니다.
+3. **개인 API 키 입력해서 외부로 우회** — 회사 데이터가 빠져나갑니다. Ollama만 사용하세요.
+4. **결과 검증 없이 바로 PR/공유** — 환각이 섞일 수 있습니다. 항상 사람이 1차 검토.
+5. **`rm -rf`, `git push --force` 같은 위험 명령에 대한 자동 승인** — 항상 수동 확인.
+</Callout>
+
+<Quiz
+  id="lesson-3-q1"
+  question="사내 Ollama 엔드포인트가 'http://ollama.corp.local:11434'일 때, Roo Code의 Base URL에 입력해야 하는 값으로 가장 적절한 것은?"
+  options={[
+    "http://ollama.corp.local:11434/",
+    "http://ollama.corp.local:11434",
+    "ollama.corp.local:11434",
+    "https://api.ollama.com/v1",
+  ]}
+  correct={1}
+  explanation="끝의 슬래시는 빼는 것이 안전하고, 프로토콜(http://)은 반드시 포함해야 합니다. 마지막 보기는 외부 가상 URL이므로 절대 사용 금지."
+/>
+
+<Quiz
+  id="lesson-3-q2"
+  question="회사 측정 데이터를 다룰 때 Roo Code 사용 정책으로 가장 안전한 조합은?"
+  options={[
+    "Provider: OpenAI / Auto-approve: 켬 / 루트 폴더 열기",
+    "Provider: Ollama (사내) / Auto-approve: 끔 / 작업 폴더만 열기",
+    "Provider: Anthropic / Auto-approve: 켬 / 작업 폴더만 열기",
+    "Provider: Ollama / Auto-approve: 켬 / 루트 폴더 열기",
+  ]}
+  correct={1}
+  explanation="① 데이터가 외부로 나가지 않도록 사내 Ollama 사용, ② 위험 명령은 사람이 확인, ③ 접근 가능한 폴더는 작업 단위로 한정 — 이 3개가 모두 만족되어야 합니다."
+/>

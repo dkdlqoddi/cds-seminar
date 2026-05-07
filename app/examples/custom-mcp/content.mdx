@@ -1,0 +1,212 @@
+## 두 가지 확장 기능
+
+이번 예제는 Roo Code의 두 가지 확장 기능을 다룹니다.
+
+1. **Custom Mode** — 우리 팀 전용 역할을 가진 모드를 직접 정의
+2. **MCP (Model Context Protocol)** — 외부 데이터 소스를 표준 방식으로 붙이기
+
+둘 다 **권한을 좁히는 도구**라는 공통점이 있습니다. 기본 모드는 "뭐든 할 수 있는 만능"이지만, 만능은 곧 위험하기 때문에 실무에서는 좁히는 쪽이 안전합니다.
+
+## A. Custom Mode — 보고서 작성 전용 모드
+
+### 시나리오
+
+매주 목요일에 작성하는 **품질 분석 보고서** 의 톤이 사람마다 너무 달라서, 팀에서
+표준 톤을 정했습니다. Roo에게 매번 그 톤을 설명하기 귀찮으니, 아예 "QA-Report-Writer"라는 전용 모드를 만들어 둡니다.
+
+### `.roomodes` 파일 정의
+
+작업 폴더 루트에 `.roomodes` 파일을 만듭니다 (Roo Code가 자동으로 읽어 들임).
+
+<CodeBlock
+  filename=".roomodes"
+  lang="json"
+  code={`{
+  "customModes": [
+    {
+      "slug": "qa-report-writer",
+      "name": "QA Report Writer",
+      "roleDefinition": "당신은 우리 회사 품질팀의 보고서 작성을 돕는 어시스턴트입니다. 다음 원칙을 따릅니다:\\n\\n- 톤은 객관적·간결하며, 추측 표현(아마도, ~인 것 같다)을 쓰지 않는다\\n- 모든 수치는 단위와 함께 표기한다 (예: 4.82 N, 60.0 Hz)\\n- 결론 → 근거 → 권장조치 순서로 작성한다\\n- 1페이지 분량을 넘지 않는다",
+      "groups": [
+        "read",
+        ["edit", { "fileRegex": "^reports/.*\\\\.(md|txt)$", "description": "reports 폴더의 마크다운/텍스트만 편집 가능" }]
+      ]
+    }
+  ]
+}`}
+/>
+
+### 핵심: `groups`로 권한을 좁힌다
+
+| 그룹 | 의미 |
+| --- | --- |
+| `read` | 어떤 파일이든 **읽기**는 가능 |
+| `edit` (정규식 제한) | `reports/` 아래 `.md` 또는 `.txt` 파일**만** 수정 가능 |
+| (`command` 그룹 미포함) | **명령 실행 불가** — 시스템에 영향 없음 |
+
+이 모드를 켠 상태에서 Roo에게 `pipeline/load.py`를 고쳐달라고 해도 **거부**됩니다. 보고서 톤만 다듬는 모드이기 때문입니다.
+
+### 실제 사용
+
+채팅창 모드 셀렉터에서 **QA Report Writer**를 선택한 뒤 다음을 입력합니다.
+
+<CodeBlock
+  filename="채팅창 (QA Report Writer 모드)"
+  lang="text"
+  code={`reports/draft-2026-W18.md 의 본문 톤을 우리 표준에 맞게 다듬어줘.
+원본 파일을 그대로 덮어쓰지 말고 reports/2026-W18.md 로 저장.
+수치 단위 누락이 있으면 본인이 N, Hz, g 중 추정해서 채우지 말고
+[단위 확인 필요] 마크만 달아둬.`}
+/>
+
+<Callout kind="tip" title="커스텀 모드의 진가">
+같은 일을 하는 일반 프롬프트보다 **70~80% 짧게** 적어도 됩니다. 매주 반복되는 작업일수록
+시간 절약이 누적됩니다. 또 권한을 좁혀두면 실수로 다른 파일을 망칠 위험이 사라집니다.
+</Callout>
+
+## B. MCP — 측정 폴더에 안전하게 접근시키기
+
+### 시나리오
+
+측정 데이터는 별도 NAS의 `Z:\\quality\\2026\\` 폴더에 쌓입니다. Roo Code의 작업 폴더와 다른 위치라 기본 도구로는 못 봅니다. **그렇다고 NAS 전체를 작업 폴더로 열면** Roo가 NAS의 모든 폴더에 접근 가능해집니다 — 위험.
+
+해결책: **filesystem MCP 서버**를 띄워 Roo에게 **NAS의 특정 하위 폴더만** 보여줍니다.
+
+<Callout kind="info" title="MCP가 뭔가요? 한 줄 요약">
+MCP는 "AI에게 도구/데이터 소스를 표준 방식으로 붙이기 위한 규격"입니다.
+JSON으로 'filesystem MCP를 켠다' 라고 적으면, Roo가 그 MCP를 통해 정의된 폴더만 안전하게 읽습니다.
+</Callout>
+
+### `mcp.json` 설정
+
+VS Code 설정 폴더 또는 작업 폴더의 `.roo/mcp.json`에 다음과 같이 적습니다.
+
+<CodeBlock
+  filename=".roo/mcp.json"
+  lang="jsonc"
+  code={`{
+  "mcpServers": {
+    "quality-data": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "Z:/quality/2026"
+      ],
+      "description": "2026년 품질 측정 raw 데이터 (읽기 전용 권장)"
+    }
+  }
+}`}
+/>
+
+이렇게 하면 Roo는 `quality-data`라는 이름의 MCP를 통해 **`Z:/quality/2026/` 하위만** 접근 가능합니다. 그 위 폴더(`Z:/quality/`)나 다른 드라이브(`C:/`)에는 접근할 수 없습니다.
+
+### 채팅 흐름
+
+<ChatTranscript
+  turns={[
+    {
+      role: "user",
+      text: "quality-data MCP를 통해 2026-W18 폴더 안에 있는 CSV 개수를 알려줘.",
+    },
+    {
+      role: "roo",
+      mode: "custom",
+      text: "MCP 도구 list_files를 호출하겠습니다.",
+    },
+    {
+      role: "tool",
+      toolName: "mcp.quality-data.list_files(path='2026-W18')",
+      text: "147 entries (CSV: 142, README: 1, ...)",
+    },
+    {
+      role: "roo",
+      mode: "custom",
+      text: "2026-W18 폴더에는 CSV 142개와 README 1개를 포함해 총 147개 항목이 있습니다.",
+    },
+    {
+      role: "user",
+      text: "Z:/quality/2025/ 의 파일 목록도 알려줘.",
+    },
+    {
+      role: "roo",
+      mode: "custom",
+      text: "이 경로는 quality-data MCP의 허용 범위(Z:/quality/2026/) 밖이라 접근할 수 없습니다. 필요하면 mcp.json에 별도 서버를 추가해 권한을 명시해야 합니다.",
+    },
+  ]}
+/>
+
+**중요한 한 컷**: Roo는 허용된 경로 밖의 폴더를 보여달라는 요청을 **거절**합니다. 이게 권한을 명시적으로 좁힌 결과입니다.
+
+## C. 함께 쓰면 — Custom Mode + MCP 조합
+
+`.roomodes`에서 커스텀 모드의 `groups`에 MCP를 넣으면, **그 모드에서만** 특정 MCP를 쓸 수 있습니다.
+
+<CodeBlock
+  filename=".roomodes (조합 예)"
+  lang="json"
+  code={`{
+  "customModes": [
+    {
+      "slug": "qa-data-reader",
+      "name": "QA Data Reader",
+      "roleDefinition": "품질 측정 raw 데이터를 읽어 통계만 보고하는 어시스턴트. 절대 파일을 수정하지 않는다.",
+      "groups": [
+        "read",
+        ["mcp", { "server": "quality-data" }]
+      ]
+    }
+  ]
+}`}
+/>
+
+이 모드는 **읽기 + quality-data MCP만** 허용됩니다. 파일 수정도, 명령 실행도 불가능. 분석 결과를 사람이 받아 보고서로 정리하는 워크플로에 적합합니다.
+
+## D. 보안 체크리스트
+
+<Callout kind="warn" title="커스텀 모드/MCP 도입 시 5가지 점검 항목">
+1. **MCP가 가리키는 경로**가 의도한 폴더 한 곳뿐인가? 더 큰 상위 경로를 잘못 적지 않았는가?
+2. 커스텀 모드의 `groups`에 **`command`(명령 실행)** 가 의도치 않게 들어있지 않은가?
+3. `.roomodes` 와 `mcp.json` 을 **git에 커밋**해서 팀원이 공유 가능한 상태인가?
+4. MCP 서버가 **읽기 전용** 인지, **쓰기도 가능** 한지 명시적으로 알고 쓰는가?
+5. 회사 보안팀에서 외부 MCP 서버(예: GitHub MCP) 사용을 승인했는가?
+</Callout>
+
+## 정리: 4가지 모드 사용 가이드
+
+| 상황 | 추천 모드 |
+| --- | --- |
+| 작은 코드 한 번에 짜기 | **Code** |
+| 단계 5개 이상의 작업 시작 | **Architect** → 검토 → Code |
+| 남이 짠 코드 이해 | **Ask** |
+| 매주 반복하는 패턴이 정해진 작업 | **Custom Mode** |
+| 작업 폴더 밖 데이터 소스 접근 | Custom + **MCP** |
+
+여기까지 따라왔다면, 코딩이 본업이 아니어도 Roo Code로 **반복 업무를 자동화하고**,
+**남이 짠 코드를 안전하게 다루며**, **권한을 좁힌 전용 도구를 직접 만드는** 데까지 도달했습니다.
+
+<Quiz
+  id="example-4-q1"
+  question="filesystem MCP를 'Z:/quality/2026' 한 폴더만 가리키도록 설정한 이유로 가장 적절한 것은?"
+  options={[
+    "성능을 빠르게 하려고 — MCP는 경로가 좁을수록 빠르다",
+    "Roo가 의도하지 않은 상위 폴더/다른 드라이브에 접근하지 못하도록 권한을 명시적으로 좁히기 위해",
+    "Z 드라이브에는 'quality' 폴더밖에 없어서",
+    "MCP는 한 폴더만 지정할 수 있는 규격상의 제약 때문에",
+  ]}
+  correct={1}
+  explanation="MCP는 여러 경로/서버를 등록할 수 있습니다. 한 폴더만 지정하는 것은 보안상 권한을 좁히기 위한 의도적 선택입니다."
+/>
+
+<Quiz
+  id="example-4-q2"
+  question="커스텀 모드의 groups에 ['edit', { fileRegex: '^reports/.*\\.md$' }]를 넣었습니다. 이 모드에서 가능한 동작은?"
+  options={[
+    "어떤 파일이든 수정 가능",
+    "reports/ 폴더 아래 .md 파일만 수정 가능",
+    "reports/ 폴더 안에서 새 .py 파일을 만들 수 있다",
+    "다른 사람이 만든 모드의 권한도 덮어쓸 수 있다",
+  ]}
+  correct={1}
+  explanation="fileRegex는 정규식으로 편집 가능한 파일 경로를 좁힙니다. 이 설정으로는 reports 아래 .md 파일만 수정할 수 있고, 다른 위치/확장자는 수정 시도 시 Roo가 거절합니다."
+/>

@@ -1,0 +1,97 @@
+import Link from "next/link";
+import { ArrowRight, Cpu, MessagesSquare, Wrench, FlaskConical, BookOpen } from "lucide-react";
+import { lessons } from "@/lib/lessons";
+
+const icons = {
+  "ai-agent": Cpu,
+  "vs-chatbot": MessagesSquare,
+  "roo-code": Wrench,
+  examples: FlaskConical,
+  glossary: BookOpen,
+} as const;
+
+export default function Home() {
+  const total = lessons.reduce((sum, l) => sum + l.minutes, 0);
+  return (
+    <div>
+      <section className="border-b border-zinc-200 bg-gradient-to-b from-zinc-50 to-white">
+        <div className="mx-auto max-w-5xl px-4 py-20 sm:px-6 sm:py-28">
+          <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700">
+            CDS 세미나 · 비개발자 엔지니어용
+          </p>
+          <h1 className="text-4xl font-bold tracking-tight text-zinc-900 sm:text-5xl">
+            코딩이 본업이 아닌 엔지니어를 위한
+            <br />
+            <span className="text-blue-600">AI 에이전트 + Roo Code</span> 입문
+          </h1>
+          <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-600">
+            챗봇과 무엇이 다른지부터 시작해, 사내 Ollama 엔드포인트에 연결한 Roo Code로
+            반복 업무를 자동화하는 4가지 Python 예제까지 약 {total}분 분량으로 따라가 봅니다.
+          </p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <Link
+              href="/ai-agent"
+              className="inline-flex items-center gap-2 rounded-full bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-zinc-800"
+            >
+              1강부터 시작 <ArrowRight className="h-4 w-4" />
+            </Link>
+            <Link
+              href="/examples"
+              className="inline-flex items-center gap-2 rounded-full border border-zinc-300 bg-white px-5 py-2.5 text-sm font-medium text-zinc-800 hover:bg-zinc-50"
+            >
+              예제부터 보기
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-5xl px-4 py-16 sm:px-6">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+          학습 경로
+        </h2>
+        <ul className="mt-4 grid gap-4 sm:grid-cols-2">
+          {lessons.map((l) => {
+            const Icon = icons[l.slug as keyof typeof icons] ?? BookOpen;
+            return (
+              <li key={l.slug}>
+                <Link
+                  href={l.href}
+                  className="group block h-full rounded-xl border border-zinc-200 bg-white p-5 transition-all hover:border-zinc-400 hover:shadow-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <Icon className="h-5 w-5 text-blue-600" aria-hidden />
+                      <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                        {l.group}
+                      </span>
+                    </span>
+                    <span className="text-xs text-zinc-400">약 {l.minutes}분</span>
+                  </div>
+                  <h3 className="mt-3 text-lg font-semibold text-zinc-900 group-hover:text-blue-700">
+                    {l.title}
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-zinc-600">{l.summary}</p>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+
+        <div className="mt-12 rounded-xl border border-zinc-200 bg-zinc-50 p-5 text-sm leading-7 text-zinc-700">
+          <p className="font-semibold text-zinc-900">이 자료를 읽기 전에 알아두면 좋은 것</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>
+              Python 문법은 몰라도 됩니다. 다만 <code className="font-mono">.csv</code>{" "}
+              같은 파일이 무엇인지, 폴더 구조가 어떻게 생겼는지 정도는 익숙해야 합니다.
+            </li>
+            <li>
+              VS Code가 컴퓨터에 깔려 있고, 사내에서 안내한 Ollama 엔드포인트
+              주소(예: <code className="font-mono">http://ollama.your-corp.local:11434</code>)를 알고 있다고 가정합니다.
+            </li>
+            <li>모든 예제는 회사 데이터를 외부로 보내지 않는 로컬/사내 LLM 사용을 전제로 합니다.</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+  );
+}

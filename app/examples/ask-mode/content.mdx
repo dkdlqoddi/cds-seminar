@@ -1,0 +1,181 @@
+## 1. 시나리오
+
+3년 전 퇴사한 선임이 남긴 `vibration_analysis.py`. 매주 한 번씩 돌리고 결과만 보고하던 스크립트인데, 어느 날 갑자기 결과가 이상해졌습니다.
+
+본인이 짠 코드가 아니어서 손대기 무서운 상황. **Ask 모드**가 정확히 이 자리에 쓰입니다.
+
+<Callout kind="info" title="Ask 모드의 핵심">
+Ask 모드는 **읽기만 합니다**. 파일을 수정하지도, 명령을 실행하지도 않습니다.
+"이 코드가 무슨 일을 하는지" 알고 싶을 때 안전하게 쓸 수 있는 모드입니다.
+</Callout>
+
+대상 스크립트는 다음과 같습니다.
+
+<CodeBlock
+  filename="vibration_analysis.py (선임 작품)"
+  lang="python"
+  code={`import numpy as np
+import pandas as pd
+from scipy.signal import butter, filtfilt
+from scipy.fft import rfft, rfftfreq
+
+FS = 1000.0
+CUTOFF = 50.0
+ORDER = 4
+THRESHOLD_G = 2.5
+
+
+def _bp(x):
+    b, a = butter(ORDER, CUTOFF / (FS / 2), btype="low")
+    return filtfilt(b, a, x)
+
+
+def analyze(path):
+    df = pd.read_csv(path)
+    sig = _bp(df["accel_z"].values)
+    N = len(sig)
+    spec = np.abs(rfft(sig)) / N
+    freqs = rfftfreq(N, 1 / FS)
+    peak_idx = np.argmax(spec[1:]) + 1
+    peak_hz = freqs[peak_idx]
+    peak_g = sig.max() / 9.81
+    flag = peak_g > THRESHOLD_G
+    return {"peak_hz": peak_hz, "peak_g": peak_g, "flag": flag}
+
+
+if __name__ == "__main__":
+    import sys, json
+    print(json.dumps(analyze(sys.argv[1])))`}
+/>
+
+## 2. 좋은 질문 vs 나쁜 질문
+
+같은 코드라도 **어떻게 묻느냐**에 따라 받는 답의 깊이가 완전히 달라집니다.
+
+<div className="not-prose grid gap-4 sm:grid-cols-2 my-6">
+  <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm">
+    <div className="mb-2 text-xs font-semibold uppercase text-red-700">나쁜 질문</div>
+    <code className="block font-mono text-zinc-800">
+      "이 코드 뭐하는 거야?"
+    </code>
+    <p className="mt-2 text-zinc-700">
+      너무 막연합니다. 모델이 "전체 요약 → 각 함수 설명 → 권장 사항"을 한꺼번에 쏟아내는데
+      정작 본인이 알고 싶은 핵심은 흐려집니다.
+    </p>
+  </div>
+  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+    <div className="mb-2 text-xs font-semibold uppercase text-emerald-700">좋은 질문</div>
+    <code className="block font-mono text-zinc-800">
+      "이 스크립트가 입력 CSV를 받아 마지막에 출력하는 dict의 각 키가 어떤 의미인지,
+      처리 단계 순서대로 설명해줘. 'flag' 값이 True가 되려면 입력이 어떤 모양이어야 해?"
+    </code>
+    <p className="mt-2 text-zinc-700">
+      입력→출력 흐름과 특정 분기 조건을 콕 집어 묻습니다. 답이 훨씬 정확하고 실용적이게 됩니다.
+    </p>
+  </div>
+</div>
+
+## 3. 실제 대화 — 단계적으로 깊어지기
+
+<ChatTranscript
+  turns={[
+    {
+      role: "user",
+      text: "vibration_analysis.py 가 입력 CSV에서 어떤 단계로 'peak_hz' 'peak_g' 'flag' 를 만들어내는지, 처리 순서대로 한국어로 설명해줘.",
+    },
+    {
+      role: "roo",
+      mode: "ask",
+      text: "파일을 읽어 단계별로 설명드리겠습니다.",
+    },
+    {
+      role: "tool",
+      toolName: "read_file('vibration_analysis.py')",
+      text: "(전체 24줄)",
+    },
+    {
+      role: "roo",
+      mode: "ask",
+      text: `이 스크립트의 흐름은 다음과 같습니다.
+
+1) **CSV 읽기**: \`accel_z\` 컬럼을 numpy 배열로 가져옵니다 (z축 가속도).
+2) **저역통과 필터** (_bp 함수): 50 Hz 이상의 고주파 노이즈를 잘라냅니다.
+   - Butterworth 4차 필터 + filtfilt(앞뒤로 두 번 필터링해 위상지연 제거).
+3) **FFT**: 필터된 신호의 주파수 스펙트럼을 계산.
+4) **peak_hz**: 0 Hz를 제외한 스펙트럼의 최댓값이 있는 주파수.
+5) **peak_g**: 시간 영역 신호의 max를 9.81로 나눠 g 단위로 환산.
+6) **flag**: peak_g가 2.5g를 넘으면 True.
+
+리턴은 {peak_hz, peak_g, flag} dict.
+
+샘플링 주파수가 1000Hz로 하드코딩되어 있다는 점이 가장 큰 가정입니다.`,
+    },
+    {
+      role: "user",
+      text: "최근에 측정 장비를 바꿨는데 새 장비는 샘플링이 2000Hz야. FS=2000으로 고치면 결과가 어떻게 달라져?",
+    },
+    {
+      role: "roo",
+      mode: "ask",
+      text: `FS만 2000으로 바꿀 때 영향을 정리하면:
+
+- **CUTOFF=50 / (FS/2)** 비율이 0.05에서 0.025로 절반이 됩니다 → 필터의 상대 차단 주파수가 더 낮아져, 의도한 50 Hz 저역통과가 그대로 유지됩니다. (이 부분은 안전.)
+- **rfftfreq(N, 1/FS)** 가 freqs 축을 바꾸므로 peak_hz는 자동으로 바뀝니다. (이 부분도 안전.)
+- **위험 지점**: peak_g 계산에는 FS가 안 쓰이므로 피크 g 값은 영향 받지 않습니다. 다만, 새 장비의 가속도 스케일(LSB→g 환산 계수)이 다르면 결과가 어긋납니다. 코드 안 \`/9.81\`은 SI 단위(m/s²)를 가정합니다.
+
+즉, FS만 2000으로 바꾸는 건 안전하지만 **새 장비가 정말 m/s² 단위로 저장하는지** 먼저 raw CSV의 단위를 확인해야 합니다.`,
+    },
+  ]}
+/>
+
+## 4. 안전하게 한 곳만 수정하기
+
+설명을 다 들은 다음, **수정은 Code 모드로 전환**해서 진행합니다.
+
+<CodeBlock
+  filename="모드 전환 후 추가 프롬프트 (Code 모드)"
+  lang="text"
+  code={`방금 Ask 모드에서 확인한대로, FS만 2000으로 바꾸는 건 안전해.
+vibration_analysis.py 파일 상단의 FS = 1000.0 한 줄만
+FS = 2000.0 으로 변경해줘. 다른 코드는 절대 손대지 마.
+
+수정 후 변경 부분만 diff로 보여줘.`}
+/>
+
+<Callout kind="tip" title='왜 "다른 코드는 절대 손대지 마"라고 적었나'>
+Code 모드에 일을 시키면 모델이 "이왕 보는 김에 깔끔하게 정리해드릴까요"라며
+주변 코드까지 손대는 경우가 종종 있습니다. **변경 범위를 명시적으로 박아두면**
+diff가 작아져서 검토가 쉬워지고, 사이드이펙트도 줄어듭니다.
+</Callout>
+
+## 5. 검증 방법
+
+<Callout kind="check" title="수정 후 직접 확인할 것">
+1. `git diff` 또는 VS Code의 변경 표시로 **딱 한 줄만 바뀌었는지** 본다.
+2. 새 장비에서 받은 CSV 한 개로 `python vibration_analysis.py new_data.csv` 실행 → JSON이 정상 출력되는지.
+3. `peak_hz` 값이 새 장비의 알려진 공진 주파수와 비슷한 범위인지 (예: 약 60Hz 부근 회전체라면 그 부근에 피크).
+4. 옛날 장비 CSV로도 똑같은 흐름을 한 번 돌려본다 — 다만 옛 데이터는 FS=1000이므로 결과가 다를 수 있음 → 결국 **장비별로 FS를 인자로 받게** 리팩토링하는 게 정답이지만, 그건 다음 작업으로.
+</Callout>
+
+## Ask 모드를 가장 잘 쓰는 순간
+
+| 상황 | Ask 모드가 적합? |
+| --- | --- |
+| 인수인계 받은 코드를 처음 읽을 때 | 매우 적합 |
+| "이 함수가 어떤 입력에 깨질 수 있는지" 알고 싶을 때 | 매우 적합 |
+| 파일 100개 사이의 호출 관계를 파악하고 싶을 때 | 적합 |
+| 코드를 고쳐야 할 때 | 부적합 — Code 모드로 전환 |
+| 파이프라인을 새로 짜야 할 때 | 부적합 — Architect 모드로 시작 |
+
+<Quiz
+  id="example-3-q1"
+  question="Ask 모드에서 'flag 값이 True가 되려면 입력이 어떤 모양이어야 해?'라고 물었더니, Roo가 'flag = True가 되도록 코드를 수정해드렸습니다'라고 답했습니다. 이때 가장 적절한 행동은?"
+  options={[
+    "그대로 받아들인다 — Ask 모드도 코드를 고칠 수 있다",
+    "Roo의 답이 잘못되었음을 인지하고, 모드 설정과 변경된 파일을 즉시 확인한다",
+    "Roo에게 '되돌려줘'라고 한 번만 답한다",
+    "Code 모드로 전환해서 더 깊은 수정을 부탁한다",
+  ]}
+  correct={1}
+  explanation="Ask 모드는 정의상 파일을 수정하지 않습니다. '수정해드렸다'는 응답이 나왔다면 모드가 잘못 설정되었거나(Code 모드로 켜져있었거나), 환각일 가능성이 있습니다. 우선 현재 모드와 git diff부터 확인하세요."
+/>

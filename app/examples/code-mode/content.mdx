@@ -1,0 +1,162 @@
+## 1. 시나리오
+
+장비 1대에서 하루치 측정을 돌리면 `run_001.csv` ~ `run_050.csv` 파일이
+하나의 폴더에 쌓입니다. 매주 월요일 아침, 이걸 한 줄짜리 요약 표로 만들어 보고하는 일을
+**3개월째 반복**하고 있다고 가정합니다.
+
+목표: **각 CSV의 `force` 컬럼에 대해 평균/표준편차/최댓값을 뽑아 `summary.csv`로 저장**하기.
+
+<FileTree
+  label="작업 폴더 구조"
+  tree={[
+    {
+      kind: "dir",
+      name: "measurement-cleanup/",
+      children: [
+        {
+          kind: "dir",
+          name: "measurements/",
+          children: [
+            { kind: "file", name: "run_001.csv", note: "← 50개 중 1개" },
+            { kind: "file", name: "run_002.csv" },
+            { kind: "file", name: "...", note: "총 50개" },
+          ],
+        },
+      ],
+    },
+  ]}
+/>
+
+각 CSV는 다음과 같은 단순한 형식이라고 합시다.
+
+<CodeBlock
+  filename="measurements/run_001.csv (앞 5행)"
+  lang="text"
+  code={`time,force,displacement
+0.000,0.012,0.0001
+0.010,0.345,0.0008
+0.020,1.872,0.0021
+0.030,3.412,0.0044
+0.040,5.018,0.0072`}
+/>
+
+## 2. 프롬프트 — 한국어 그대로
+
+VS Code에서 `measurement-cleanup/` 폴더를 열고, Roo Code 사이드바에서 **모드를
+Code로** 두고 다음과 같이 입력합니다.
+
+<CodeBlock
+  filename="Roo Code 채팅창"
+  lang="text"
+  code={`measurements/ 폴더 안의 모든 CSV에 대해 다음을 해줘.
+
+1. force 컬럼의 평균(mean), 표준편차(std), 최댓값(max)을 계산
+2. 결과를 run_id, mean, std, max 컬럼을 갖는 한 개의 표로 만든다
+3. summary.csv 파일로 작업 폴더 루트에 저장
+4. 마지막에 head 5행을 보여줘
+
+코드는 summarize.py 파일로 저장해서 그걸 실행해줘. (재실행 가능하도록)`}
+/>
+
+<Callout kind="tip" title="좋은 프롬프트의 3요소">
+- **입력**이 어디 있는지 (`measurements/` 폴더)
+- **출력**이 무엇인지 (`summary.csv`, 컬럼 4개)
+- **검증 방법** (head 5행 보여줘) — 결과 확인 단계까지 적어두면 환각이 줄어듭니다.
+</Callout>
+
+## 3. Roo의 행동 — 단계별 관찰
+
+<ChatTranscript
+  turns={[
+    {
+      role: "roo",
+      mode: "code",
+      text: "폴더 구조와 컬럼 형식을 먼저 확인하겠습니다.",
+    },
+    {
+      role: "tool",
+      toolName: "list_files('measurements/')",
+      text: "run_001.csv ... run_050.csv (총 50개)",
+    },
+    {
+      role: "tool",
+      toolName: "read_file('measurements/run_001.csv', lines=3)",
+      text: "time,force,displacement\n0.000,0.012,0.0001\n0.010,0.345,0.0008",
+    },
+    {
+      role: "roo",
+      mode: "code",
+      text: "컬럼 구조를 확인했습니다. pandas로 일괄 처리하는 스크립트를 작성합니다.",
+    },
+    {
+      role: "tool",
+      toolName: "write_file('summarize.py')",
+      text: "(28줄 작성됨 — 아래 결과물 참고)",
+    },
+    {
+      role: "tool",
+      toolName: "execute('python summarize.py')",
+      text: "summary.csv 생성됨 (50행)\n     run_id      mean       std       max\n0  run_001  4.8201  1.5123  9.872\n1  run_002  5.0114  1.6033  9.918\n2  run_003  4.9722  1.4988  9.804\n...",
+    },
+    {
+      role: "roo",
+      mode: "code",
+      text: "완료했습니다. summary.csv를 만들었고 head 5행을 출력해 확인했습니다. 컬럼 형식이 맞나요?",
+    },
+  ]}
+/>
+
+## 4. 결과물
+
+<CodeBlock
+  filename="summarize.py"
+  lang="python"
+  code={`"""measurements/ 폴더의 CSV 요약 → summary.csv
+
+각 CSV에서 force 컬럼의 mean/std/max를 계산해
+한 개의 요약 표로 합친다.
+"""
+from pathlib import Path
+import pandas as pd
+
+INPUT_DIR = Path("measurements")
+OUTPUT = Path("summary.csv")
+
+rows = []
+for csv_path in sorted(INPUT_DIR.glob("*.csv")):
+    df = pd.read_csv(csv_path)
+    rows.append(
+        {
+            "run_id": csv_path.stem,
+            "mean": df["force"].mean(),
+            "std": df["force"].std(),
+            "max": df["force"].max(),
+        }
+    )
+
+summary = pd.DataFrame(rows)
+summary.to_csv(OUTPUT, index=False)
+
+print(summary.head())
+print(f"\\nWrote {len(summary)} rows to {OUTPUT}")`}
+/>
+
+## 5. 검증 방법
+
+<Callout kind="check" title="이 결과를 신뢰해도 될까? — 3가지만 직접 확인">
+1. **행 개수**: `summary.csv`의 행 수가 50인지 본다 (Excel로 열어 마지막 행 번호 확인).
+2. **샘플 1개 수동 비교**: `run_001.csv`를 Excel로 열어 force 평균을 직접 계산한 값과 표 1행의 mean이 일치하는지 본다.
+3. **이상치 한눈에 보기**: max 컬럼을 정렬해서 비정상적으로 큰 값이 있는지 확인.
+
+**셋 다 통과하면** 이 스크립트는 다음 주에도 그대로 돌릴 수 있습니다.
+</Callout>
+
+<Callout kind="warn" title="흔한 함정">
+- 어떤 CSV는 `force`가 아니라 `Force`(대문자)일 수 있다 → Roo에게 "컬럼 이름을 대소문자 무시하고 매칭해줘"라고 추가 지시.
+- 빈 CSV가 섞여있을 수 있다 → 스크립트에 `if df.empty: continue` 한 줄 추가 요청.
+- 단위가 다른 파일(N vs kN)이 섞여있을 수 있다 → 이건 Roo도 모릅니다. 사람이 정의해줘야 합니다.
+</Callout>
+
+## 다음 단계
+
+이 정도 작업은 Code 모드 한 번이면 끝납니다. 그러나 **여러 단계를 거치는 더 큰 작업**(예: raw 데이터 → 보정 → 그래프 → PDF 보고서)은 곧장 Code 모드로 들어가면 길을 잃습니다. 그래서 다음 예제에서는 **Architect 모드**로 먼저 plan을 받아보는 패턴을 다룹니다.
