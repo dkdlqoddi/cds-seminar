@@ -1,0 +1,198 @@
+## 시나리오
+
+매일 아침 팀 회의에서 "어제 측정 결과 요약 좀 알려주세요" 라는 질문이 반복됩니다.
+숫자 표는 예제 1에서 이미 자동 생성하고 있지만, **사람이 읽기 좋은 한 문단 요약** 까지 자동화하면 회의 준비 시간을 통째로 줄일 수 있습니다.
+
+전략:
+1. 예제 1이 만든 어제자 통계 xlsx를 읽거나, 동일 통계 계산 로직을 재사용
+2. 통계를 LLM에 던져 **3~5줄 요약문** 생성
+3. 사내 SMTP로 `team@samsungds.net` 메일링에 발송
+
+## 워크플로우 다이어그램
+
+<WorkflowDiagram
+  caption="LLM이 통계 표를 보고 사람말로 요약 → 메일로 즉시 발송"
+  nodes={[
+    { type: "trigger", name: "Schedule Trigger", detail: "매일 07:30" },
+    { type: "file", name: "Read Binary File", detail: "어제자 report.xlsx" },
+    { type: "file", name: "Spreadsheet File", detail: "xlsx → JSON 행 배열" },
+    { type: "code", name: "Aggregate", detail: "여러 행 → 1개 통합 객체" },
+    { type: "ai", name: "HTTP Request (Gateway)", detail: "통계 → 한 문단 요약" },
+    { type: "set", name: "Set", detail: "메일 본문 HTML 조립" },
+    { type: "http", name: "Send Email", detail: "SMTP로 발송" },
+  ]}
+/>
+
+## 노드별 설정값
+
+### 1. Schedule Trigger
+
+| 필드 | 값 |
+| --- | --- |
+| Trigger Interval | `Days` |
+| Hour | `7` |
+| Minute | `30` |
+| Days of Week | `Mon, Tue, Wed, Thu, Fri` |
+
+### 2~3. xlsx 읽기
+
+`{{ "D:\\measurements\\report\\" + $now.minus({days:1}).toFormat("yyyy-MM-dd") + ".xlsx" }}` 를 그대로 읽고, **Spreadsheet File** 노드의 `Read from file` 모드로 행 배열을 만듭니다.
+
+### 4. Aggregate — 여러 행을 한 객체로
+
+LLM에 N개의 item을 던지면 N번 호출됩니다. 매일 1통의 메일만 필요하므로
+**Aggregate** 노드로 모든 통계를 한 객체로 합칩니다.
+
+| 필드 | 값 |
+| --- | --- |
+| Aggregate | `All Item Data (Into a Single List)` |
+| Put Output in Field | `rows` |
+
+### 5. HTTP Request — 게이트웨이로 요약 요청
+
+```json
+{
+  "model": "gpt-oss-120b",
+  "messages": [
+    {
+      "role": "system",
+      "content": "당신은 반도체 측정팀의 일일 보고서 작성자입니다. 사용자가 어제자 통계 행 배열을 제공합니다. 3~5문장으로 (1) 전체적 트렌드, (2) 평균 대비 이탈이 큰 항목 1~2개, (3) 권장 조치 한 줄을 한국어로 요약하세요. 숫자 인용 시 단위 포함. 마크다운 사용 금지, 줄바꿈만 사용."
+    },
+    { "role": "user", "content": "={{ JSON.stringify($json.rows) }}" }
+  ],
+  "temperature": 0.3
+}
+```
+
+### 6. Set — 메일 본문 HTML 조립
+
+| Field | Value |
+| --- | --- |
+| `subject` | `={{ "📊 측정 일일 다이제스트 — " + $now.minus({days:1}).toFormat("yyyy-MM-dd") }}` |
+| `bodyHtml` | `={{ "<p>" + $json.choices[0].message.content.replace(/\\n/g, "<br>") + "</p><hr><p style='color:#888;font-size:12px'>본 메일은 n8n 자동화로 발송되었습니다.</p>" }}` |
+
+### 7. Send Email (SMTP)
+
+좌측 메뉴 → Credentials → SMTP 사내 메일 서버 정보를 한 번만 등록합니다.
+`Send Email` 노드는 그 Credential을 골라 쓰면 됩니다.
+
+| 필드 | 값 |
+| --- | --- |
+| From Email | `n8n-bot@samsungds.net` (실제 발송 권한 있는 계정) |
+| To Email | `team-measure@samsungds.net` |
+| Subject | `={{ $json.subject }}` |
+| HTML | `={{ $json.bodyHtml }}` |
+
+## Import 가능한 JSON
+
+```json
+{
+  "name": "예제4 · 일일 다이제스트 메일",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24 }] },
+        "triggerAtHour": 7,
+        "triggerAtMinute": 30
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "name": "Schedule Trigger",
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ 'D:\\\\measurements\\\\report\\\\' + $now.minus({days: 1}).toFormat('yyyy-MM-dd') + '.xlsx' }}",
+        "dataPropertyName": "data"
+      },
+      "type": "n8n-nodes-base.readBinaryFile",
+      "name": "Read xlsx",
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "operation": "fromFile",
+        "fileFormat": "xlsx",
+        "options": { "headerRow": true }
+      },
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "name": "Parse xlsx",
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "rows"
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "name": "Aggregate",
+      "position": [720, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-oss-120b\",\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"당신은 반도체 측정팀의 일일 보고서 작성자입니다. 사용자가 어제자 통계 행 배열을 제공합니다. 3~5문장으로 (1) 전체적 트렌드, (2) 평균 대비 이탈이 큰 항목 1~2개, (3) 권장 조치 한 줄을 한국어로 요약하세요.\" },\n    { \"role\": \"user\", \"content\": \"{{ JSON.stringify($json.rows) }}\" }\n  ],\n  \"temperature\": 0.3\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Summarize with LLM",
+      "credentials": {
+        "httpHeaderAuth": { "name": "사내 GPT-OSS 게이트웨이" }
+      },
+      "position": [960, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "subject",
+              "type": "string",
+              "value": "={{ '📊 측정 일일 다이제스트 — ' + $now.minus({days:1}).toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "bodyHtml",
+              "type": "string",
+              "value": "={{ '<p>' + $json.choices[0].message.content.replace(/\\n/g, '<br>') + '</p>' }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.set",
+      "name": "Compose email",
+      "position": [1200, 0]
+    },
+    {
+      "parameters": {
+        "fromEmail": "n8n-bot@samsungds.net",
+        "toEmail": "team-measure@samsungds.net",
+        "subject": "={{ $json.subject }}",
+        "html": "={{ $json.bodyHtml }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailSend",
+      "name": "Send Email",
+      "credentials": { "smtp": { "name": "사내 SMTP" } },
+      "position": [1440, 0]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": { "main": [[{ "node": "Read xlsx", "type": "main", "index": 0 }]] },
+    "Read xlsx": { "main": [[{ "node": "Parse xlsx", "type": "main", "index": 0 }]] },
+    "Parse xlsx": { "main": [[{ "node": "Aggregate", "type": "main", "index": 0 }]] },
+    "Aggregate": { "main": [[{ "node": "Summarize with LLM", "type": "main", "index": 0 }]] },
+    "Summarize with LLM": { "main": [[{ "node": "Compose email", "type": "main", "index": 0 }]] },
+    "Compose email": { "main": [[{ "node": "Send Email", "type": "main", "index": 0 }]] }
+  }
+}
+```
+
+<Callout kind="tip" title="실패하면 자기 자신에게 알림">
+**Settings → Workflow → Error Workflow** 에서 별도 워크플로우를 지정하면, 이 워크플로우가 실패할 때마다
+별도 워크플로우(예: Teams 알림)가 자동 호출됩니다. 메일 발송 실패가 며칠 뒤에야 발견되는 사고를 막아줍니다.
+</Callout>

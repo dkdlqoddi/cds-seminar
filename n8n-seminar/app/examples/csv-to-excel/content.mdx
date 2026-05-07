@@ -1,0 +1,215 @@
+## 시나리오
+
+매일 야간 측정이 끝나면 `D:\measurements\YYYY-MM-DD\` 폴더 안에 50개 안팎의 CSV가 떨어집니다.
+지금까지는 본인이 출근해서 한 시간 동안 Excel로 모아 평균과 표준편차를 계산해 보고서를 만들고 있었다고 칩시다.
+
+이걸 n8n 워크플로우 하나로 옮기면, **출근 전 6시에 자동으로 끝나 있고** Excel 보고서는 정해진 폴더에 저장돼 있습니다.
+
+## 워크플로우 다이어그램
+
+<WorkflowDiagram
+  caption="Schedule으로 시작 → 어제자 폴더 경로 계산 → CSV 일괄 읽기 → 합쳐서 .xlsx 저장"
+  nodes={[
+    { type: "trigger", name: "Schedule Trigger", detail: "매일 06:00 (KST)" },
+    { type: "set", name: "Set", detail: "어제 날짜 폴더 경로 계산" },
+    { type: "code", name: "Code", detail: "폴더 안 모든 CSV 목록화" },
+    { type: "file", name: "Read Binary File", detail: "각 CSV 읽기 (item마다 1개)" },
+    { type: "code", name: "Code", detail: "CSV 파싱 + 평균/표준편차" },
+    { type: "file", name: "Spreadsheet File", detail: "xlsx로 변환" },
+    { type: "file", name: "Write Binary File", detail: "report\\YYYY-MM-DD.xlsx 저장" },
+  ]}
+/>
+
+## 노드별 설정값
+
+### 1. Schedule Trigger
+
+| 필드 | 값 |
+| --- | --- |
+| Trigger Interval | `Days` |
+| Hour | `6` |
+| Minute | `0` |
+
+### 2. Set — 어제 날짜 폴더 경로 계산
+
+n8n의 **Expression** 으로 어제 날짜를 그대로 식으로 넣습니다.
+
+| 필드 | 값 |
+| --- | --- |
+| Mode | `Manual Mapping` |
+| Field Name | `folder` |
+| Field Value | `={{ "D:\\measurements\\" + $now.minus({days: 1}).toFormat("yyyy-MM-dd") }}` |
+| Field Name | `reportPath` |
+| Field Value | `={{ "D:\\measurements\\report\\" + $now.minus({days: 1}).toFormat("yyyy-MM-dd") + ".xlsx" }}` |
+
+<Callout kind="tip" title="Expression 문법 한 줄 요약">
+`{{ ... }}` 안에 들어가면 JS 식입니다. `$now` 는 luxon DateTime 객체. `$json` 은 입력 데이터.
+앞 노드 결과는 `$node["노드이름"].json` 으로 접근합니다.
+</Callout>
+
+### 3. Code — 폴더 안 CSV 목록화
+
+```javascript
+const fs = require("fs");
+const path = require("path");
+
+const folder = $input.first().json.folder;
+const files = fs.readdirSync(folder)
+  .filter(f => f.toLowerCase().endsWith(".csv"))
+  .map(f => ({ json: { fullPath: path.join(folder, f), name: f } }));
+
+return files;
+```
+
+### 4. Read Binary File
+
+| 필드 | 값 |
+| --- | --- |
+| File Selector | `={{ $json.fullPath }}` |
+| Property Name | `data` |
+
+### 5. Code — CSV 파싱 + 통계
+
+```javascript
+const rows = [];
+for (const item of items) {
+  const text = item.binary.data
+    ? Buffer.from(item.binary.data.data, "base64").toString("utf8")
+    : "";
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  const header = lines[0].split(",");
+  const numericCols = header.map((_, i) => i).filter(i => i > 0);
+
+  // 각 숫자 컬럼의 평균/표준편차
+  const stats = {};
+  for (const ci of numericCols) {
+    const vals = lines.slice(1)
+      .map(l => parseFloat(l.split(",")[ci]))
+      .filter(v => !isNaN(v));
+    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const std = Math.sqrt(
+      vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length
+    );
+    stats[`${header[ci]}_mean`] = Number(mean.toFixed(4));
+    stats[`${header[ci]}_std`] = Number(std.toFixed(4));
+  }
+
+  rows.push({ json: { file: item.json.name, ...stats } });
+}
+return rows;
+```
+
+### 6. Spreadsheet File
+
+| 필드 | 값 |
+| --- | --- |
+| Operation | `Write to file` |
+| File Format | `xlsx` |
+| Put Output File in Field | `data` |
+| File Name | `report.xlsx` |
+
+### 7. Write Binary File
+
+| 필드 | 값 |
+| --- | --- |
+| File Name | `={{ $node["Set"].json.reportPath }}` |
+| Property Name | `data` |
+
+## Import 가능한 JSON
+
+좌상단 **⋮ → Import from clipboard** 에 붙여넣어 그대로 사용합니다.
+
+```json
+{
+  "name": "예제1 · CSV 폴더 → 일일 Excel 보고서",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24 }] },
+        "triggerAtHour": 6
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "name": "Schedule Trigger",
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "folder",
+              "type": "string",
+              "value": "={{ 'D:\\\\measurements\\\\' + $now.minus({days: 1}).toFormat('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "reportPath",
+              "type": "string",
+              "value": "={{ 'D:\\\\measurements\\\\report\\\\' + $now.minus({days: 1}).toFormat('yyyy-MM-dd') + '.xlsx' }}"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.set",
+      "name": "Set",
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst folder = $input.first().json.folder;\nreturn fs.readdirSync(folder)\n  .filter(f => f.toLowerCase().endsWith('.csv'))\n  .map(f => ({ json: { fullPath: path.join(folder, f), name: f } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "name": "List CSVs",
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.fullPath }}",
+        "dataPropertyName": "data"
+      },
+      "type": "n8n-nodes-base.readBinaryFile",
+      "name": "Read Binary File",
+      "position": [720, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = [];\nfor (const item of items) {\n  const text = Buffer.from(item.binary.data.data, 'base64').toString('utf8');\n  const lines = text.split(/\\r?\\n/).filter(Boolean);\n  const header = lines[0].split(',');\n  const stats = { file: item.json.name };\n  for (let ci = 1; ci < header.length; ci++) {\n    const vals = lines.slice(1).map(l => parseFloat(l.split(',')[ci])).filter(v => !isNaN(v));\n    if (!vals.length) continue;\n    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;\n    const std = Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length);\n    stats[header[ci] + '_mean'] = Number(mean.toFixed(4));\n    stats[header[ci] + '_std'] = Number(std.toFixed(4));\n  }\n  rows.push({ json: stats });\n}\nreturn rows;"
+      },
+      "type": "n8n-nodes-base.code",
+      "name": "Compute stats",
+      "position": [960, 0]
+    },
+    {
+      "parameters": {
+        "operation": "writeToFile",
+        "fileFormat": "xlsx",
+        "options": { "fileName": "report.xlsx" }
+      },
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "name": "Spreadsheet File",
+      "position": [1200, 0]
+    },
+    {
+      "parameters": {
+        "fileName": "={{ $node[\"Set\"].json.reportPath }}",
+        "dataPropertyName": "data"
+      },
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "name": "Write Binary File",
+      "position": [1440, 0]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": { "main": [[{ "node": "Set", "type": "main", "index": 0 }]] },
+    "Set": { "main": [[{ "node": "List CSVs", "type": "main", "index": 0 }]] },
+    "List CSVs": { "main": [[{ "node": "Read Binary File", "type": "main", "index": 0 }]] },
+    "Read Binary File": { "main": [[{ "node": "Compute stats", "type": "main", "index": 0 }]] },
+    "Compute stats": { "main": [[{ "node": "Spreadsheet File", "type": "main", "index": 0 }]] },
+    "Spreadsheet File": { "main": [[{ "node": "Write Binary File", "type": "main", "index": 0 }]] }
+  }
+}
+```
+
+<Callout kind="warn" title="실행 전 폴더가 있어야 합니다">
+`D:\measurements\report\` 폴더가 미리 만들어져 있어야 Write Binary File이 실패하지 않습니다.
+첫 워크플로우 테스트 전에 한 번 만들어두세요.
+</Callout>

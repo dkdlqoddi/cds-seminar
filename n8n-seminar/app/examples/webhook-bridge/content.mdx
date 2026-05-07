@@ -1,0 +1,197 @@
+## 시나리오
+
+지금까지의 예제는 모두 **n8n이 시간/파일을 보고 자기가 시작** 하는 방식이었습니다.
+하지만 현장에서 더 자연스러운 흐름은 — **장비 쪽이 끝났다고 알려주는 것**입니다.
+
+이 예제는 그 반대 방향:
+
+> 장비에서 측정이 끝나면 운영 PC의 Python 후처리 스크립트가 n8n Webhook URL을 한 번 호출.
+> n8n이 그걸 받아 (1) 데이터 무결성 검증 → (2) LLM 분류 → (3) 결과를 호출자에게 동기 응답으로 반환.
+
+n8n 워크플로우가 **HTTP API처럼** 동작하는 패턴입니다.
+
+## 워크플로우 다이어그램
+
+<WorkflowDiagram
+  caption="외부 호출자가 들어오고 → 검증 → 분기 → 동기 응답까지 한 워크플로우 안"
+  nodes={[
+    { type: "trigger", name: "Webhook", detail: "POST /webhook/measurement-done" },
+    { type: "code", name: "Code", detail: "payload 검증, 측정 ID 추출" },
+    { type: "if", name: "Switch", detail: "type별 분기 (DC/AC/RF)" },
+    { type: "ai", name: "HTTP Request (Gateway)", detail: "type에 맞는 system prompt로 분류" },
+    { type: "http", name: "Respond to Webhook", detail: "JSON 응답 즉시 반환" },
+  ]}
+/>
+
+## 노드별 설정값
+
+### 1. Webhook 노드
+
+| 필드 | 값 |
+| --- | --- |
+| HTTP Method | `POST` |
+| Path | `measurement-done` |
+| Authentication | `Header Auth` (또는 Basic) |
+| Response Mode | `Using 'Respond to Webhook' Node` |
+
+**Authentication 권장**: Webhook URL은 사내망에 노출되므로, Webhook 자체에도 Header Auth를
+걸어둡니다. Credential을 만들어 호출자에게만 알려주는 token을 박아둡니다.
+
+활성화하면 두 개의 URL이 생깁니다:
+
+| 종류 | 용도 |
+| --- | --- |
+| Test URL | 워크플로우 편집 화면에서 `Listen for Test Event` 누른 동안만 동작. 디버깅용. |
+| Production URL | **Active** 토글이 켜진 동안 항상 동작. 실서비스용. |
+
+### 2. Code — payload 검증
+
+```javascript
+const body = $input.first().json.body || $input.first().json;
+
+const required = ["measurement_id", "type", "csv_path"];
+for (const k of required) {
+  if (!body[k]) {
+    throw new Error(`필수 필드 누락: ${k}`);
+  }
+}
+if (!["DC", "AC", "RF"].includes(body.type)) {
+  throw new Error(`지원하지 않는 type: ${body.type}`);
+}
+
+return [{ json: body }];
+```
+
+throw하면 워크플로우가 실패하고, **Respond to Webhook** 이 호출되지 않으므로
+호출자는 4xx/5xx를 받습니다. 다만 더 명시적으로 응답하려면 다음 절의 Switch에 error 분기를 두는 편이 좋습니다.
+
+### 3. Switch — type별 분기
+
+| 출력 | 조건 |
+| --- | --- |
+| 0 | `={{ $json.type === "DC" }}` |
+| 1 | `={{ $json.type === "AC" }}` |
+| 2 | `={{ $json.type === "RF" }}` |
+
+각 출력 뒤에 **HTTP Request (Gateway)** 노드를 두고 system prompt를 type에 맞게 구성합니다.
+세 개의 노드를 만들기 귀찮다면 한 개로 묶고 system prompt에 `{{ $json.type }}` 만 끼워 넣어도 됩니다.
+
+### 4. HTTP Request — LLM 호출
+
+3강과 동일. 다만 **응답에서 `choices[0].message.content` 만 추출** 해 호출자에게 돌려주면 충분합니다.
+
+### 5. Respond to Webhook
+
+| 필드 | 값 |
+| --- | --- |
+| Respond With | `JSON` |
+| Response Body | `={{ { "ok": true, "measurement_id": $json.measurement_id, "label": JSON.parse($json.choices[0].message.content).label, "reason": JSON.parse($json.choices[0].message.content).reason } }}` |
+| Response Code | `200` |
+
+## 호출 측 — Python 클라이언트 예시
+
+장비 운영 PC에서 후처리 스크립트가 n8n을 부르는 코드입니다.
+
+```python
+import os
+import requests
+
+N8N_URL = "http://n8n-host:5678/webhook/measurement-done"
+N8N_TOKEN = os.environ["N8N_TOKEN"]  # n8n Header Auth Credential의 값과 동일
+
+resp = requests.post(
+    N8N_URL,
+    headers={"X-Auth-Token": N8N_TOKEN, "Content-Type": "application/json"},
+    json={
+        "measurement_id": "M-2026-05-07-001",
+        "type": "DC",
+        "csv_path": r"D:\measurements\incoming\M-2026-05-07-001.csv",
+    },
+    timeout=30,
+)
+resp.raise_for_status()
+result = resp.json()
+print(f"분류: {result['label']} ({result['reason']})")
+```
+
+## Import 가능한 JSON
+
+```json
+{
+  "name": "예제5 · Webhook 브리지",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "measurement-done",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "name": "Webhook",
+      "credentials": { "httpHeaderAuth": { "name": "Webhook 호출자 토큰" } },
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst required = ['measurement_id', 'type', 'csv_path'];\nfor (const k of required) {\n  if (!body[k]) throw new Error('필수 필드 누락: ' + k);\n}\nif (!['DC', 'AC', 'RF'].includes(body.type)) {\n  throw new Error('지원하지 않는 type: ' + body.type);\n}\nreturn [{ json: body }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "name": "Validate payload",
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-oss-120b\",\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"반도체 {{ $json.type }} 측정 결과를 보고 normal/caution/anomaly + 한 줄 reason을 JSON 한 줄로만 답하세요.\" },\n    { \"role\": \"user\", \"content\": \"measurement_id={{ $json.measurement_id }}, csv_path={{ $json.csv_path }}\" }\n  ],\n  \"temperature\": 0,\n  \"response_format\": { \"type\": \"json_object\" }\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Classify",
+      "credentials": { "httpHeaderAuth": { "name": "사내 GPT-OSS 게이트웨이" } },
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, measurement_id: $('Validate payload').item.json.measurement_id, label: JSON.parse($json.choices[0].message.content).label, reason: JSON.parse($json.choices[0].message.content).reason } }}",
+        "options": { "responseCode": 200 }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "name": "Respond",
+      "position": [720, 0]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate payload", "type": "main", "index": 0 }]] },
+    "Validate payload": { "main": [[{ "node": "Classify", "type": "main", "index": 0 }]] },
+    "Classify": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  }
+}
+```
+
+<Callout kind="warn" title="Test URL과 Production URL을 헷갈리지 않기">
+호출 측 Python에 박아두는 URL은 반드시 **Production URL** 입니다 (`/webhook/measurement-done`).
+**Test URL** (`/webhook-test/...`) 은 워크플로우 편집 중 'Listen for Test Event' 를 누른 동안만 살아있습니다.
+배포 후 자주 일어나는 사고 1순위가 이 두 URL을 헷갈리는 것.
+</Callout>
+
+<Quiz
+  id="webhook-q1"
+  question="이 예제에서 Webhook의 'Response Mode' 를 'Using Respond to Webhook Node' 로 둔 이유는?"
+  options={[
+    "n8n이 더 빠르게 응답하기 때문에",
+    "워크플로우 마지막 노드(Respond)가 결정한 본문을 호출자에게 동기 반환하기 위해",
+    "Webhook 노드 자체가 응답을 반환하지 못하기 때문에",
+    "보안상 그렇게 해야만 인증이 동작하기 때문에",
+  ]}
+  correct={1}
+  explanation="기본값 'When Last Node Finishes' 는 마지막 노드의 출력을 자동으로 응답합니다. 'Respond to Webhook' 모드를 쓰면 응답 본문/상태 코드를 명시적으로 컨트롤할 수 있어, 분기 후 통합된 응답을 만들기에 적합합니다."
+/>

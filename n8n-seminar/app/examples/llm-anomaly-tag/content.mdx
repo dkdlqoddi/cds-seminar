@@ -1,0 +1,204 @@
+## 시나리오
+
+매일 들어오는 측정 결과 CSV 안에는 수십~수백 개의 행이 있습니다. 통상은 정해진 임계치로
+간단히 거를 수 있지만, "여러 컬럼의 조합이 미묘하게 이상한 케이스" 는 임계치 룰만으로는 잡기 어렵습니다.
+
+여기서는 **각 행을 사내 GPT-OSS 게이트웨이에 보내, 정상/주의/이상 + 한 줄 이유** 를 받게 합니다.
+완벽한 분류기는 아니지만 — **선임 검토 전 사전 분류기** 로는 충분히 유용합니다.
+
+<Callout kind="warn" title="LLM 분류는 1차 스크리닝일 뿐">
+이 워크플로우 결과를 그대로 의사결정에 쓰면 안 됩니다. **"검토 우선순위 정렬"** 정도가 적절한 사용법입니다.
+이상치로 잡힌 행은 사람이 한 번 더 확인하세요.
+</Callout>
+
+## 워크플로우 다이어그램
+
+<WorkflowDiagram
+  caption="CSV의 각 행이 별개의 item이 되어 LLM에 한 번씩 호출됨"
+  nodes={[
+    { type: "trigger", name: "Manual Trigger", detail: "테스트용. 실서비스는 Schedule으로 교체" },
+    { type: "file", name: "Read Binary File", detail: "오늘자 measurement.csv" },
+    { type: "file", name: "Spreadsheet File", detail: "CSV → JSON 행 배열" },
+    { type: "ai", name: "HTTP Request (Gateway)", detail: "행마다 1회. label + reason 추출" },
+    { type: "set", name: "Set", detail: "원본 + label + reason 합치기" },
+    { type: "file", name: "Spreadsheet File", detail: "JSON → labeled.csv" },
+  ]}
+/>
+
+## 노드별 설정값
+
+### 1. Read Binary File + Spreadsheet File
+
+CSV를 행 단위로 풀어 다음 노드의 입력 item으로 만듭니다.
+
+| 노드 | 필드 | 값 |
+| --- | --- | --- |
+| Read Binary File | File Path | `D:\measurements\latest\measurement.csv` |
+| Spreadsheet File | Operation | `Read from file` |
+| Spreadsheet File | File Format | `csv` |
+| Spreadsheet File | Header Row | `true` |
+
+### 2. HTTP Request — 행 하나당 LLM 호출
+
+3강에서 만든 **사내 GPT-OSS 게이트웨이** Credential을 그대로 씁니다.
+프롬프트는 행 데이터를 그대로 던지고 **JSON 한 줄로만 답하라** 고 강제합니다.
+
+| 필드 | 값 |
+| --- | --- |
+| Method | `POST` |
+| URL | `http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions` |
+| Authentication | `Header Auth` Credential 선택 |
+
+JSON Body:
+
+```json
+{
+  "model": "gpt-oss-120b",
+  "messages": [
+    {
+      "role": "system",
+      "content": "당신은 반도체 측정 데이터 검수 어시스턴트입니다. 사용자가 한 행의 측정값을 JSON으로 줍니다. 'normal' / 'caution' / 'anomaly' 중 하나의 label과 한 문장 이유 reason을 반드시 JSON 한 줄로만 답하세요. 다른 텍스트 금지. 예: {\"label\":\"caution\",\"reason\":\"vth가 평균 대비 2σ 이탈\"}"
+    },
+    { "role": "user", "content": "={{ JSON.stringify($json) }}" }
+  ],
+  "temperature": 0,
+  "response_format": { "type": "json_object" }
+}
+```
+
+<Callout kind="tip" title="temperature 0 + response_format = 안정적 파싱">
+분류 작업은 `temperature: 0` 으로 고정해 같은 입력에 같은 결과가 나오게 합니다.
+gpt-oss는 `response_format: {"type": "json_object"}` 를 지원하므로 JSON으로만 답이 나옵니다.
+</Callout>
+
+### 3. Set — 원본 + 분류 결과 합치기
+
+LLM 응답에서 `choices[0].message.content` 를 JSON parse해 원본 행에 붙입니다.
+
+| Field Name | Value |
+| --- | --- |
+| `... (앞 노드 모든 필드 통과)` | `Include Other Fields = true` |
+| `label` | `={{ JSON.parse($json.choices[0].message.content).label }}` |
+| `reason` | `={{ JSON.parse($json.choices[0].message.content).reason }}` |
+
+### 4. Spreadsheet File — labeled.csv 작성
+
+| 필드 | 값 |
+| --- | --- |
+| Operation | `Write to file` |
+| File Format | `csv` |
+| Put Output File in Field | `data` |
+
+뒤에 Write Binary File 노드를 붙여 `D:\measurements\latest\labeled.csv` 로 저장하면 끝.
+
+## Import 가능한 JSON
+
+```json
+{
+  "name": "예제3 · LLM 이상치 분류",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "name": "Manual Trigger",
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "fileSelector": "D:\\measurements\\latest\\measurement.csv",
+        "dataPropertyName": "data"
+      },
+      "type": "n8n-nodes-base.readBinaryFile",
+      "name": "Read CSV",
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "operation": "fromFile",
+        "fileFormat": "csv",
+        "options": { "headerRow": true }
+      },
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "name": "Parse CSV",
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-oss-120b\",\n  \"messages\": [\n    { \"role\": \"system\", \"content\": \"당신은 반도체 측정 데이터 검수 어시스턴트입니다. 사용자가 한 행의 측정값을 JSON으로 줍니다. 'normal' / 'caution' / 'anomaly' 중 하나의 label과 한 문장 이유 reason을 반드시 JSON 한 줄로만 답하세요. 다른 텍스트 금지.\" },\n    { \"role\": \"user\", \"content\": \"{{ JSON.stringify($json).replace(/\\\"/g, '\\\\\\\"') }}\" }\n  ],\n  \"temperature\": 0,\n  \"response_format\": { \"type\": \"json_object\" }\n}",
+        "options": {
+          "retry": { "maxTries": 3, "waitBetweenTries": 2000 }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Classify with LLM",
+      "credentials": {
+        "httpHeaderAuth": { "name": "사내 GPT-OSS 게이트웨이" }
+      },
+      "position": [720, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "label",
+              "type": "string",
+              "value": "={{ JSON.parse($json.choices[0].message.content).label }}"
+            },
+            {
+              "name": "reason",
+              "type": "string",
+              "value": "={{ JSON.parse($json.choices[0].message.content).reason }}"
+            }
+          ]
+        },
+        "includeOtherFields": true
+      },
+      "type": "n8n-nodes-base.set",
+      "name": "Merge result",
+      "position": [960, 0]
+    },
+    {
+      "parameters": {
+        "operation": "writeToFile",
+        "fileFormat": "csv",
+        "options": { "fileName": "labeled.csv" }
+      },
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "name": "Write CSV",
+      "position": [1200, 0]
+    },
+    {
+      "parameters": {
+        "fileName": "D:\\measurements\\latest\\labeled.csv",
+        "dataPropertyName": "data"
+      },
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "name": "Save labeled.csv",
+      "position": [1440, 0]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": { "main": [[{ "node": "Read CSV", "type": "main", "index": 0 }]] },
+    "Read CSV": { "main": [[{ "node": "Parse CSV", "type": "main", "index": 0 }]] },
+    "Parse CSV": { "main": [[{ "node": "Classify with LLM", "type": "main", "index": 0 }]] },
+    "Classify with LLM": { "main": [[{ "node": "Merge result", "type": "main", "index": 0 }]] },
+    "Merge result": { "main": [[{ "node": "Write CSV", "type": "main", "index": 0 }]] },
+    "Write CSV": { "main": [[{ "node": "Save labeled.csv", "type": "main", "index": 0 }]] }
+  }
+}
+```
+
+<Callout kind="check" title="대량 호출 시 알아둘 것">
+- 행이 1000개를 넘는다면 HTTP Request 노드의 **Batch Size + Retry** 옵션으로 동시성을 제한합니다 (보통 5).
+- 게이트웨이가 rate limit을 반환하면 (429) `waitBetweenTries: 2000` 의 자동 백오프가 작동합니다.
+- 한 번에 한 행이 비싸다면 system prompt를 바꿔 **여러 행을 한 번에** 분류하게 묶는 식으로 호출 수를 줄일 수 있습니다.
+</Callout>

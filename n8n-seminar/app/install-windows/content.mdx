@@ -1,0 +1,183 @@
+## 사전 준비
+
+<FileTree
+  label="Windows PC에 미리 갖춰져 있어야 하는 것"
+  tree={[
+    { kind: "file", name: "Node.js 20 LTS", note: "node -v 가 v20.x 라고 답해야 함" },
+    { kind: "file", name: "npm", note: "Node 설치 시 함께 설치됨" },
+    { kind: "file", name: "관리자 권한 PowerShell", note: "선택. 영구 설치 시에만 필요" },
+    { kind: "file", name: "사내 게이트웨이 정보", note: "URL + x-dep-ticket 헤더 값" },
+  ]}
+/>
+
+<Callout kind="warn" title="Node.js 22가 아니라 20 LTS를 권장합니다">
+n8n은 LTS 메이저 버전을 따라가지만, 사내 사설 npm 미러에서 최신 Node 빌드가 늦게 들어오는 경우가
+있습니다. **20 LTS**가 가장 트러블이 적은 선택입니다.
+</Callout>
+
+## 1분 시작: `npx n8n`
+
+가장 빠른 방법입니다. 영구 설치 없이 즉석에서 돌립니다.
+
+```powershell
+# PowerShell 또는 Windows Terminal에서
+npx n8n
+```
+
+처음 실행 시 npm이 패키지를 받아오느라 30초~1분 정도 걸립니다.
+끝나면 자동으로 브라우저가 열리며 `http://localhost:5678` 로 들어갑니다.
+
+<Callout kind="check" title="첫 실행에서 묻는 것">
+- **이메일 주소** — 로컬 계정 식별용 (외부로 나가지 않음)
+- **비밀번호** — 동료가 이 PC를 만지지 못하도록 설정해 두는 게 좋습니다
+- 데이터는 모두 `%USERPROFILE%\.n8n\` 안에 SQLite로 저장됩니다
+</Callout>
+
+## 영구 설치: PC를 켜자마자 자동 실행
+
+세미나 종료 후에도 매일 쓸 거라면 한 번만 글로벌 설치합니다.
+
+```powershell
+npm install -g n8n
+
+# 데이터 폴더 미리 확인
+echo $env:USERPROFILE\.n8n
+```
+
+PC 부팅과 함께 백그라운드에서 돌리려면 Windows 작업 스케줄러나
+[`pm2-windows-service`](https://www.npmjs.com/package/pm2-windows-service)를 씁니다.
+세미나에서는 `npx n8n` 만 충분히 다룹니다.
+
+## 데이터 폴더의 의미
+
+n8n이 만든 워크플로우, 자격증명(Credential), 실행 기록은 모두 한 곳에 모입니다.
+
+<FileTree
+  label="%USERPROFILE%\.n8n\ 안에 들어 있는 것"
+  tree={[
+    { kind: "dir", name: ".n8n", children: [
+      { kind: "file", name: "database.sqlite", note: "워크플로우 + 자격증명 + 실행 로그" },
+      { kind: "file", name: "config", note: "암호화 키 (이걸 잃으면 자격증명을 복호화할 수 없음)" },
+      { kind: "dir", name: "binaryData", children: [
+        { kind: "file", name: "(파일 노드 임시 데이터)" },
+      ]},
+    ]},
+  ]}
+/>
+
+<Callout kind="warn" title="백업 대상 = 이 폴더 하나">
+PC를 옮기거나 동료에게 워크플로우를 넘길 때, **`.n8n` 폴더 통째로** 복사하면 그대로 동작합니다.
+다만 자격증명 암호화 키가 들어 있으니 **버전관리(git)에는 절대 올리지 마세요.** 워크플로우 자체만
+공유하려면 UI에서 JSON으로 export 합니다 (예제 1~5에 모두 포함됨).
+</Callout>
+
+## 사내 LLM 게이트웨이를 어떻게 부르는가
+
+사내 GPT-OSS 게이트웨이는 **OpenAI 호환 엔드포인트**입니다. 즉, n8n의 OpenAI 노드를
+쓰는 게 가장 매끈하지만 — 이 노드는 헤더 커스텀이 제한적이라 `x-dep-ticket` 같은
+사내 인증 헤더를 깔끔히 넣기 어렵습니다.
+
+따라서 이 세미나에서는 **항상 HTTP Request 노드** 를 씁니다. 더 단순하고, 무엇이
+어디로 나가는지 그대로 보입니다.
+
+### Credential 만들기
+
+좌측 메뉴 → **Credentials** → **Create Credential** → 검색창에 "Header Auth" 입력 →
+다음과 같이 채웁니다:
+
+| 필드 | 값 |
+| --- | --- |
+| Name | `사내 GPT-OSS 게이트웨이` |
+| Header Name | `x-dep-ticket` |
+| Header Value | (사내 AI 플랫폼에서 발급받은 ticket 문자열) |
+
+이 Credential 하나를 만들어두면, 모든 HTTP Request 노드에서 재사용할 수 있습니다.
+
+### 첫 워크플로우: 게이트웨이에 한 마디 보내고 응답 받기
+
+<WorkflowDiagram
+  caption="가장 단순한 LLM 호출 워크플로우 — 노드 2개"
+  nodes={[
+    { type: "trigger", name: "Manual Trigger", detail: "테스트용. 'Execute Workflow' 버튼" },
+    { type: "http", name: "HTTP Request", detail: "POST /chat/completions" },
+  ]}
+/>
+
+#### HTTP Request 노드 설정값
+
+```json
+{
+  "method": "POST",
+  "url": "http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions",
+  "authentication": "genericCredentialType",
+  "genericAuthType": "httpHeaderAuth",
+  "sendHeaders": true,
+  "headerParameters": {
+    "parameters": [
+      { "name": "Content-Type", "value": "application/json" }
+    ]
+  },
+  "sendBody": true,
+  "specifyBody": "json",
+  "jsonBody": {
+    "model": "gpt-oss-120b",
+    "messages": [
+      { "role": "system", "content": "당신은 반도체 측정 데이터를 분석하는 어시스턴트입니다." },
+      { "role": "user", "content": "측정 데이터에서 일반적으로 봐야 할 통계량 3가지를 한 줄씩 알려줘." }
+    ],
+    "temperature": 0.2
+  }
+}
+```
+
+<Callout kind="tip" title="Credential 선택 잊지 말기">
+HTTP Request 노드의 **Authentication** 영역에서 방금 만든 `사내 GPT-OSS 게이트웨이` Credential을
+선택해야 `x-dep-ticket` 이 자동으로 붙습니다. 본문에는 ticket을 절대 넣지 마세요.
+</Callout>
+
+### Manual Trigger 클릭 → 응답 확인
+
+`Execute Workflow` 버튼을 누르면 게이트웨이가 응답합니다. HTTP Request 노드를 클릭하면
+오른쪽 패널에 들어온 JSON이 그대로 보이고, 그중 `choices[0].message.content` 가 모델이 만든 답입니다.
+
+```json
+{
+  "id": "chatcmpl-abc...",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "1) 평균과 표준편차 — 분포의 중심과 산포도\n2) 최소/최대 — 이상치 후보\n3) 사분위수(Q1, Q3) — 박스플롯 형태로 한눈에 ..."
+      },
+      "finish_reason": "stop"
+    }
+  ]
+}
+```
+
+이 한 워크플로우가 동작했다면 **이 세미나의 절반은 끝난 셈** 입니다. 4강의 5가지 예제는
+이 골격에 트리거와 후처리 노드를 더한 것에 불과합니다.
+
+## 자주 만나는 트러블슈팅
+
+| 증상 | 원인 / 해결 |
+| --- | --- |
+| `npx n8n` 첫 실행이 멈춤 | 사내망에서 npm registry 접근이 막힘. `npm config set registry <사내 미러>` |
+| 401 / 403 | `x-dep-ticket` 만료 또는 헤더 이름 오타. 사내 AI 플랫폼에서 재발급 |
+| `ECONNREFUSED` | 게이트웨이 URL의 호스트명/포트 오타. 브라우저로 그대로 GET 해서 reachable 여부 확인 |
+| 응답이 오긴 하는데 한국어가 깨짐 | 거의 없으나, `Content-Type: application/json; charset=utf-8` 명시 |
+| 워크플로우는 도는데 결과가 갱신 안 됨 | 좌상단 **Save** 안 눌렀거나, 데이터 핀(pin)이 옛날 값에 박혀 있음 |
+
+<Quiz
+  id="install-q1"
+  question="OpenAI 노드가 아닌 HTTP Request 노드로 사내 게이트웨이를 호출하는 가장 큰 이유는?"
+  options={[
+    "OpenAI 노드는 유료라서",
+    "x-dep-ticket 같은 사내 인증 헤더를 자유롭게 넣기 위해",
+    "HTTP Request가 더 빠르기 때문에",
+    "OpenAI 노드는 사내 IP에서 차단되기 때문에",
+  ]}
+  correct={1}
+  explanation="속도/비용 차이는 거의 없습니다. 핵심은 사내 게이트웨이 인증 방식인 'x-dep-ticket' 헤더를 깔끔하게 다룰 수 있는가입니다. HTTP Request + Header Auth Credential 조합이 가장 명확하고 디버깅하기 쉽습니다."
+/>
