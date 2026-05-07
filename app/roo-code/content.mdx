@@ -7,21 +7,41 @@
 비슷한 도구로 Cursor, Cline, GitHub Copilot Chat 등이 있지만, Roo Code의 장점은:
 
 - **VS Code에 그대로 붙는다** — 별도 에디터 설치 불필요
-- **Ollama 같은 로컬/사내 LLM을 1급 시민으로 지원** — 외부 API 키 없이 사용 가능
+- **OpenAI Compatible 서버를 1급 시민으로 지원** — 사내 게이트웨이를 그대로 붙일 수 있음
 - **모드 전환이 명확** — Code / Architect / Ask / 커스텀 모드를 직접 선택
+
+## 우리가 쓰는 LLM 백엔드: 사내 GPT-OSS 게이트웨이
+
+본 세미나는 OpenAI/Anthropic 같은 외부 API를 쓰지 않습니다. 대신 사내에 이미
+구축되어 있는 **GPT-OSS 게이트웨이**를 사용합니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 종류 | 사내 API 게이트웨이 (사내망 한정 접근) |
+| 인터페이스 | **OpenAI Compatible** (`/v1/chat/completions` 호환) |
+| 호스트 (Stage) | `apigw-stg.samsungds.net:8000` |
+| 서빙 모델 | `openai/gpt-oss-120b` |
+| 인증 | 표준 Bearer 아님 — 사내 발급 **`x-dep-ticket`** 헤더 |
+
+<Callout kind="info" title="왜 외부 API가 아니라 게이트웨이인가">
+- 측정 데이터/도면/사내 코드가 **외부 클라우드로 빠져나가지 않습니다**.
+- 사내 인증/감사 로그가 게이트웨이 한 곳에서 일괄 관리됩니다.
+- 사용량/비용이 부서 단위로 추적됩니다 — 개인 카드로 OpenAI 계정 만들 필요 없음.
+</Callout>
 
 ## 사전 준비
 
 <Callout kind="check" title="시작 전 체크리스트">
 1. **VS Code**가 설치되어 있다 ([code.visualstudio.com](https://code.visualstudio.com))
-2. **사내 Ollama 엔드포인트 주소**를 알고 있다 (예: `http://ollama.your-corp.local:11434`)
-3. 그 엔드포인트에서 **사용할 수 있는 모델 이름**을 알고 있다 (예: `qwen2.5-coder:14b`)
-4. **작업할 폴더**가 하나 정해져 있다 (예: `D:\projects\measurement-cleanup`)
+2. **`x-dep-ticket`** 자격증명을 발급받았다 (사내 AI 플랫폼 포털에서 발급, 사번 기반)
+3. **사용자 ID**(`User-Id` / `User-Type`로 사용할 사번 또는 메일)를 알고 있다
+4. **시스템 명**(`Send-System-Name`)을 안내받았다 (예: `CDS_Infra_SW`)
+5. **작업할 폴더**가 하나 정해져 있다 (예: `D:\projects\measurement-cleanup`)
 </Callout>
 
-엔드포인트와 모델 이름은 보통 사내 인프라팀 또는 AI 플랫폼팀에서 안내받습니다. 모르면 먼저 그쪽에 문의하세요.
+ticket 발급/시스템 명 등록은 사내 AI 플랫폼팀의 안내를 따라 미리 끝내두세요.
 
-## 7단계 설치 가이드
+## 8단계 설치 가이드
 
 ### 1) VS Code 열기
 
@@ -40,40 +60,53 @@
 회사 비밀자료 폴더를 통째로 열면 그 전부에 접근할 수 있다는 뜻이므로,
 **작업 단위로 폴더를 분리해 두는 습관**이 필요합니다.
 
-### 4) Provider를 Ollama로 설정
+### 4) Provider를 "OpenAI Compatible"로 설정
 
-Roo Code 채팅창 우상단 **설정(톱니바퀴)** → **Provider** 드롭다운 → `Ollama` 선택.
+Roo Code 채팅창 우상단 **설정(톱니바퀴)** → **Provider** 드롭다운 → **`OpenAI Compatible`** 선택.
+
+<Callout kind="warn" title="Ollama 옵션을 고르지 않는다">
+Provider 목록에 "Ollama"가 따로 있지만, 본 세미나의 사내 게이트웨이는 **vanilla Ollama가 아니라 OpenAI Compatible 인터페이스**를 따르므로 반드시 **OpenAI Compatible**을 선택해야 합니다. Ollama 옵션을 고르면 인증 헤더 형식이 달라 호출이 모두 실패합니다.
+</Callout>
 
 ### 5) Base URL 입력
 
-**Base URL** 칸에 사내 Ollama 엔드포인트를 입력합니다.
+`.env.local`의 `BASE_URL`은 `…/v1/chat/completions` 까지 적혀 있는데,
+Roo Code의 OpenAI Compatible Provider는 **`/chat/completions`를 자동으로 붙이므로
+그 앞부분(`/v1`)까지만** 입력합니다.
+
+| .env.local의 BASE_URL | Roo Code Base URL 칸에 입력할 값 |
+| --- | --- |
+| `http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions` | `http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1` |
+
+### 6) Model 입력
+
+**Model** 칸에 `.env.local`의 `MODEL_NAME` 값을 그대로 입력합니다.
 
 <CodeBlock
-  filename="Roo Code → Settings → Provider: Ollama"
+  filename="Roo Code → Settings → OpenAI Compatible"
   lang="text"
-  code={`Base URL:  http://ollama.your-corp.local:11434
-              ↑ 사내에서 안내받은 주소를 그대로 입력`}
+  code={`Base URL:  http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1
+Model:     openai/gpt-oss-120b
+API Key:   credential:TICKET-xxxxxxxx-...   ← 발급받은 ticket 전체를 그대로 붙여넣기`}
 />
 
-<Callout kind="warn" title="끝에 슬래시 붙이지 말 것">
-`http://...:11434/`처럼 마지막에 슬래시(`/`)를 붙이면 일부 환경에서 연결 실패가 납니다.
-주소 끝의 슬래시는 빼주세요.
+<Callout kind="info" title='왜 API Key 칸에도 ticket을 넣나'>
+표준 OpenAI Compatible 클라이언트는 입력된 키를 `Authorization: Bearer …`로 전송합니다. 게이트웨이는 이 Bearer 헤더를 무시하지만, 빈 칸이면 Roo Code가 요청 자체를 보내지 않을 수 있어 같은 ticket 값을 그대로 넣어두는 것이 안전합니다.
 </Callout>
 
-### 6) 모델 선택
+### 7) Custom Headers 등록 — 가장 중요한 단계
 
-Base URL이 정상이면 **Model** 드롭다운에 사내에서 미리 받아둔 모델 목록이 표시됩니다. 코드 작업이라면 다음 중 하나를 권장합니다.
+게이트웨이는 표준 Bearer 인증이 아닌 **커스텀 헤더 4종**을 요구합니다. Roo Code의
+**Custom Headers** 영역(설정 화면 하단)에 다음을 추가합니다.
 
-| 모델 이름 (예시) | 메모리 | 특성 |
+| 헤더 이름 | 값 | 설명 |
 | --- | --- | --- |
-| `qwen2.5-coder:7b` | 적음 | 가벼움, 단순 작업에 충분 |
-| `qwen2.5-coder:14b` | 중간 | **권장** — 균형 잡힘 |
-| `deepseek-coder-v2:16b` | 중간 | Python 코드 품질 양호 |
-| `llama3.1:70b` | 큼 | 사내 GPU 여유 있을 때 |
+| `x-dep-ticket` | `credential:TICKET-xxxxxxxx-...` (`API_KEY` 값 전체) | **실제 인증 키** |
+| `Send-System-Name` | `CDS_Infra_SW` | 호출 시스템 식별 |
+| `User-Id` | `your.id@samsung.com` (사번/메일) | 호출자 식별 |
+| `User-Type` | (User-Id와 동일) | 감사 로그용 |
 
-목록이 비어있다면 엔드포인트가 잘못되었거나, 모델이 아직 pull되지 않은 상태입니다. 인프라팀에 문의하세요.
-
-### 7) 첫 프롬프트로 연결 확인
+### 8) 첫 프롬프트로 연결 확인
 
 채팅창에 다음을 입력해 봅니다.
 
@@ -82,7 +115,36 @@ Base URL이 정상이면 **Model** 드롭다운에 사내에서 미리 받아둔
   code={`현재 폴더에 어떤 파일들이 있는지 알려줘.`}
 />
 
-Roo가 `list_files` 도구를 호출하고 결과를 한국어로 요약해주면 연결 성공입니다.
+Roo가 `list_files` 도구를 호출하고 결과를 한국어로 요약해주면 연결 성공입니다. **401/403** 이 떨어지면 ticket 값 또는 System-Name이 맞는지 다시 확인하고, **404**가 떨어지면 Base URL 끝의 `/v1` 까지만 적었는지 확인합니다.
+
+## 알아두어야 할 게이트웨이의 한 가지 까다로운 점
+
+`.env.local` 동봉 예제(`ollama_example.py`)를 자세히 보면 매 요청마다 **새 UUID** 인 `Prompt-Msg-Id`, `Completion-Msg-Id` 헤더를 보내는 것을 알 수 있습니다.
+
+<CodeBlock
+  filename="ollama_example.py 발췌"
+  lang="python"
+  code={`headers = {
+    'x-dep-ticket'      : api_key,
+    'Send-System-Name'  : system_name,
+    'User-Id'           : user_id,
+    'User-Type'         : user_id,
+    'Prompt-Msg-Id'     : str(uuid.uuid4()),     # ← 매 호출마다 새로 생성
+    'Completion-Msg-Id' : str(uuid.uuid4()),     # ← 매 호출마다 새로 생성
+    'Accept'            : 'text/event-stream; charset=utf-8',
+    'Content-Type'      : 'application/json',
+}`}
+/>
+
+<Callout kind="warn" title="Roo Code 환경에서의 한계">
+Roo Code의 Custom Headers는 **정적**입니다. 매 호출마다 다른 UUID를 자동 생성하지는 못합니다. 게이트웨이가:
+
+- 두 UUID를 **선택 헤더로 취급**한다면 → Custom Headers 비워두면 끝.
+- **정적 더미 UUID를 허용**한다면 → Roo Code Custom Headers에 임의의 UUID 한 번만 등록.
+- **반드시 매번 새 UUID를 요구**한다면 → Roo Code로는 정직하게 호출이 어렵습니다. 그 경우 [예제 5](/examples/direct-api)의 Python 직접 호출 패턴을 사용하세요.
+
+사내 인프라팀에 정확한 정책을 한 번 확인해두면 향후 디버깅이 쉬워집니다.
+</Callout>
 
 ## 4가지 모드 한눈에 보기
 
@@ -119,34 +181,34 @@ Roo Code 채팅창 하단의 모드 셀렉터에서 전환할 수 있습니다.
 
 <Callout kind="warn" title="사내에서 Roo Code 쓸 때 5가지 금기">
 1. **Auto-approve를 켜둔 채로 자리 비우기** — 위험한 명령이 자동 승인될 수 있습니다.
-2. **루트 폴더(C: 또는 ~) 통째로 열기** — Roo가 의도치 않은 파일까지 건드릴 수 있습니다.
-3. **개인 API 키 입력해서 외부로 우회** — 회사 데이터가 빠져나갑니다. Ollama만 사용하세요.
-4. **결과 검증 없이 바로 PR/공유** — 환각이 섞일 수 있습니다. 항상 사람이 1차 검토.
+2. **루트 폴더(`C:` 또는 `~`) 통째로 열기** — Roo가 의도치 않은 파일까지 건드릴 수 있습니다.
+3. **개인 OpenAI/Anthropic 키로 우회** — 회사 데이터가 빠져나갑니다. 게이트웨이 외 백엔드 금지.
+4. **`x-dep-ticket`을 git/Slack/문서에 붙여넣기** — ticket은 본인 사번으로 묶인 자격증명입니다. 누설 시 본인이 책임을 집니다. `.env.local`만 사용하고 절대 커밋하지 마세요.
 5. **`rm -rf`, `git push --force` 같은 위험 명령에 대한 자동 승인** — 항상 수동 확인.
 </Callout>
 
 <Quiz
   id="lesson-3-q1"
-  question="사내 Ollama 엔드포인트가 'http://ollama.corp.local:11434'일 때, Roo Code의 Base URL에 입력해야 하는 값으로 가장 적절한 것은?"
+  question=".env.local의 BASE_URL이 'http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions' 일 때, Roo Code의 Base URL 칸에 입력해야 하는 값은?"
   options={[
-    "http://ollama.corp.local:11434/",
-    "http://ollama.corp.local:11434",
-    "ollama.corp.local:11434",
-    "https://api.ollama.com/v1",
+    "BASE_URL 값을 그대로 (끝의 /chat/completions 포함)",
+    "http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1",
+    "http://apigw-stg.samsungds.net:8000",
+    "http://localhost:11434",
   ]}
   correct={1}
-  explanation="끝의 슬래시는 빼는 것이 안전하고, 프로토콜(http://)은 반드시 포함해야 합니다. 마지막 보기는 외부 가상 URL이므로 절대 사용 금지."
+  explanation="OpenAI Compatible 클라이언트는 /chat/completions 를 자동으로 붙입니다. v1 까지만 입력하세요. 끝까지 적으면 호출 시 /chat/completions 가 두 번 붙어 404가 납니다."
 />
 
 <Quiz
   id="lesson-3-q2"
-  question="회사 측정 데이터를 다룰 때 Roo Code 사용 정책으로 가장 안전한 조합은?"
+  question="사내 게이트웨이 호출에 필요한 인증 헤더로 가장 적절한 조합은?"
   options={[
-    "Provider: OpenAI / Auto-approve: 켬 / 루트 폴더 열기",
-    "Provider: Ollama (사내) / Auto-approve: 끔 / 작업 폴더만 열기",
-    "Provider: Anthropic / Auto-approve: 켬 / 작업 폴더만 열기",
-    "Provider: Ollama / Auto-approve: 켬 / 루트 폴더 열기",
+    "Authorization: Bearer <API_KEY> (표준 OpenAI 방식)",
+    "x-dep-ticket / Send-System-Name / User-Id / User-Type 4종",
+    "X-API-Key 한 줄",
+    "쿠키 기반 세션 인증",
   ]}
   correct={1}
-  explanation="① 데이터가 외부로 나가지 않도록 사내 Ollama 사용, ② 위험 명령은 사람이 확인, ③ 접근 가능한 폴더는 작업 단위로 한정 — 이 3개가 모두 만족되어야 합니다."
+  explanation="게이트웨이는 표준 Bearer 인증을 사용하지 않습니다. 4종 헤더가 모두 있어야 정상 호출되며, x-dep-ticket이 누락되면 401, Send-System-Name이 누락되면 보통 403을 받습니다."
 />

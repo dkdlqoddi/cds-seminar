@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ModeBadge } from "./ModeBadge";
 
-type Mode = "code" | "architect" | "ask" | "custom";
+type Mode = "code" | "architect" | "ask" | "custom" | "api";
 
 export type Turn = {
   role: "user" | "roo" | "tool";

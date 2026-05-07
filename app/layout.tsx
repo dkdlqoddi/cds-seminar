@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     template: "%s · AI 에이전트 입문",
   },
   description:
-    "코딩을 본업으로 하지 않는 엔지니어를 위한 AI 에이전트 기초와 Roo Code 실습 (Ollama 로컬 LLM 기준).",
+    "코딩을 본업으로 하지 않는 엔지니어를 위한 AI 에이전트 기초와 Roo Code 실습 (사내 GPT-OSS 게이트웨이 기준).",
 };
 
 export default function RootLayout({

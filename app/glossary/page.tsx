@@ -56,15 +56,35 @@ const terms: Term[] = [
   },
   {
     term: "Ollama",
-    body: "로컬 또는 사내 서버에서 LLM을 돌릴 수 있게 해주는 런타임. 데이터를 외부로 보내지 않고 모델을 사용할 수 있어 회사 자료를 다루기에 적합.",
+    body: "로컬에서 LLM을 직접 띄울 수 있게 해주는 오픈소스 런타임. 본 세미나의 사내 게이트웨이는 Ollama 본체가 아니라 OpenAI Compatible 인터페이스를 따르는 별도 서버이므로, Roo Code에서도 'Ollama' 옵션이 아닌 'OpenAI Compatible'을 선택해야 합니다.",
   },
   {
     term: "Endpoint (엔드포인트)",
-    body: "API 또는 LLM 서버의 접속 주소. 사내 Ollama라면 보통 `http://ollama.your-corp.local:11434` 같은 형태.",
+    body: "API 또는 LLM 서버의 접속 주소. 사내 게이트웨이라면 보통 `http://apigw-stg.samsungds.net:8000/.../v1` 형태.",
+  },
+  {
+    term: "API 게이트웨이",
+    body: "사내에서 외부/내부 LLM을 통합 인증·감사·라우팅하기 위해 두는 중간 서버. 호출자는 게이트웨이만 알면 되고, 내부 모델 변경은 게이트웨이 뒤에서 일어남.",
+  },
+  {
+    term: "x-dep-ticket",
+    body: "사내 게이트웨이의 인증 헤더. 사번 기반으로 발급되며 만료 가능. 표준 OpenAI Bearer 토큰을 대체합니다. 절대 git/Slack/문서에 노출 금지.",
+  },
+  {
+    term: "OpenAI Compatible",
+    body: "OpenAI API와 동일한 `/v1/chat/completions` 인터페이스를 따르는 LLM 서버 규격. 사내 게이트웨이가 이 규격을 따르므로 OpenAI SDK/호환 클라이언트(Roo Code 포함)로 호출 가능합니다.",
+  },
+  {
+    term: "gpt-oss-120b",
+    body: "Open Weights 계열의 120B 파라미터 LLM. 본 세미나에서 사내 게이트웨이가 서빙하는 기본 모델 (`openai/gpt-oss-120b`).",
+  },
+  {
+    term: ".env.local",
+    body: "Next.js/Python 등에서 로컬 환경 변수를 담는 파일. 본 세미나에서는 BASE_URL/API_KEY/MODEL_NAME/SYSTEM_NAME을 담습니다. **반드시 .gitignore에 등록**하여 커밋되지 않도록 해야 합니다.",
   },
   {
     term: "Base URL",
-    body: "Roo Code 설정에서 LLM 서버 주소를 적는 칸. 사내 Ollama 엔드포인트를 그대로 입력하면 됩니다.",
+    body: "Roo Code 설정에서 LLM 서버 주소를 적는 칸. 본 세미나에서는 사내 게이트웨이의 `…/v1` 까지(끝의 `/chat/completions` 제외)를 입력합니다.",
   },
   {
     term: ".roomodes",

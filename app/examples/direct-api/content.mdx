@@ -1,0 +1,298 @@
+## 1. 시나리오
+
+[예제 1](/examples/code-mode)에서 만든 `summary.csv`(50개 측정의 평균/표준편차/최댓값)를 받아, **각 행마다 LLM이 1줄짜리 코멘트**(정상/이상 추정 + 짧은 근거)를 달고, 결과를 `commentary.csv`로 저장합니다.
+
+이런 작업은 **매일 새벽 자동 실행**되어야 하므로 Roo Code를 띄울 수 없습니다. Python 스크립트가 직접 게이트웨이를 호출하는 패턴이 필요합니다.
+
+<FileTree
+  label="작업 폴더 구조"
+  tree={[
+    {
+      kind: "dir",
+      name: "measurement-cleanup/",
+      children: [
+        { kind: "file", name: "summary.csv", note: "← 예제 1의 결과물" },
+        { kind: "file", name: ".env.local", note: "← 자격증명 (절대 커밋 금지)" },
+        { kind: "file", name: ".gitignore", note: "← .env.local 등록 필수" },
+        { kind: "file", name: "comment.py", note: "← 우리가 만들 스크립트" },
+        { kind: "file", name: "commentary.csv", note: "← 실행 결과" },
+      ],
+    },
+  ]}
+/>
+
+## 2. 자격증명 — `.env.local`
+
+게이트웨이 호출에 필요한 4가지 값을 환경변수 파일에 둡니다. 절대 코드 안에 하드코딩하지 마세요.
+
+<CodeBlock
+  filename=".env.local"
+  lang="ini"
+  code={`# 1. Base URL (BASE_URL의 끝은 /chat/completions 까지 포함한 full URL)
+BASE_URL=http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions
+
+# 2. API key (사내 AI 플랫폼에서 발급받은 ticket — 본인 사번 자격증명)
+API_KEY=credential:TICKET-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:...
+
+# 3. Model name
+MODEL_NAME=openai/gpt-oss-120b
+
+# 4. System name (사내에서 안내받은 호출 시스템 식별자)
+SYSTEM_NAME=CDS_Infra_SW`}
+/>
+
+<Callout kind="warn" title="보안: .env.local은 무조건 .gitignore">
+- `git status`에 `.env.local`이 절대 보여서는 안 됩니다.
+- 위 placeholder 자리에 본인 ticket을 그대로 붙여넣은 후 **즉시 `.gitignore`** 등록하세요.
+- 한 번 커밋되면 git history에서 지우는 데 비용이 들고, 그 사이 ticket이 노출됩니다.
+- 노출된 ticket은 **본인 사번에 묶여 있어** 사고 시 본인 책임입니다.
+</Callout>
+
+<CodeBlock
+  filename=".gitignore (추가할 줄)"
+  lang="text"
+  code={`# 환경변수 (절대 커밋 금지)
+.env
+.env.local
+.env.*.local`}
+/>
+
+## 3. 호출 패턴 — `ollama_example.py`에서 출발
+
+저장소에 동봉된 `ollama_example.py`는 **"hello → pirate 응답"** 만 하는 최소 예제입니다. 그 호출 패턴(헤더 8개, payload 형식, 응답 파싱)을 그대로 가져와 우리 작업에 맞게 확장합니다.
+
+<CodeBlock
+  filename="ollama_example.py 의 핵심 부분 (참고)"
+  lang="python"
+  code={`headers = {
+    'x-dep-ticket'      : api_key,
+    'Send-System-Name'  : system_name,
+    'User-Id'           : user_id,
+    'User-Type'         : user_id,
+    'Prompt-Msg-Id'     : str(uuid.uuid4()),
+    'Completion-Msg-Id' : str(uuid.uuid4()),
+    'Accept'            : 'text/event-stream; charset=utf-8',
+    'Content-Type'      : 'application/json',
+}
+
+payload = json.dumps({
+    "model"      : model_name,
+    "messages"   : [
+        {"role": "system", "content": "..."},
+        {"role": "user",   "content": "..."},
+    ],
+    "temperature": 0.5,
+    "stream"     : False,
+})
+
+resp = requests.post(url=base_url, headers=headers, data=payload, timeout=None)
+print(resp.json()["choices"][0]["message"]["content"])`}
+/>
+
+여기서 주의할 점은 **`Prompt-Msg-Id` / `Completion-Msg-Id` 가 매 호출마다 새 UUID**라는 점입니다. (이게 Roo Code로 동일 게이트웨이를 호출할 때 까다로운 이유입니다 — Roo Code의 Custom Headers는 정적이라 매번 새 UUID를 만들지 못합니다.)
+
+## 4. 실용 스크립트 — `comment.py`
+
+`summary.csv`의 각 행에 대해 LLM에 코멘트를 받아 `commentary.csv`로 저장합니다.
+
+<CodeBlock
+  filename="comment.py"
+  lang="python"
+  code={`"""summary.csv → LLM 코멘트 → commentary.csv
+
+각 측정 run의 통계(mean/std/max)를 사내 게이트웨이의 LLM에 전달하고,
+'정상/이상' 추정 + 1줄 근거를 받아 표로 합친다.
+
+사용법:
+    python comment.py            # summary.csv 기준
+    python comment.py other.csv  # 다른 입력 파일
+
+요구 패키지: requests, pandas, python-dotenv
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+import uuid
+from pathlib import Path
+
+import pandas as pd
+import requests
+from dotenv import load_dotenv
+
+# ---- 1. 환경변수 로딩 ---------------------------------------------------------
+load_dotenv(".env.local")
+
+BASE_URL    = os.environ["BASE_URL"]
+API_KEY     = os.environ["API_KEY"]
+MODEL_NAME  = os.environ["MODEL_NAME"]
+SYSTEM_NAME = os.environ["SYSTEM_NAME"]
+USER_ID     = os.environ.get("USER_ID", "your.id@samsung.com")
+
+SYSTEM_PROMPT = (
+    "당신은 측정 데이터의 통계 요약(mean/std/max)을 보고 "
+    "정상/이상 추정과 1줄 근거를 한국어로 답하는 품질 분석 어시스턴트입니다. "
+    "반드시 JSON 한 줄로만 답하세요. 형식: "
+    '{"flag": "ok" 또는 "warn", "reason": "한 줄 근거"}'
+)
+
+
+# ---- 2. 게이트웨이 호출 한 번 -------------------------------------------------
+def ask_llm(user_prompt: str, *, retries: int = 2) -> dict:
+    payload = json.dumps(
+        {
+            "model": MODEL_NAME,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.2,
+            "stream": False,
+        }
+    )
+    headers = {
+        "x-dep-ticket": API_KEY,
+        "Send-System-Name": SYSTEM_NAME,
+        "User-Id": USER_ID,
+        "User-Type": USER_ID,
+        "Prompt-Msg-Id": str(uuid.uuid4()),
+        "Completion-Msg-Id": str(uuid.uuid4()),
+        "Accept": "text/event-stream; charset=utf-8",
+        "Content-Type": "application/json",
+    }
+    last_err: Exception | None = None
+    for attempt in range(retries + 1):
+        try:
+            r = requests.post(BASE_URL, headers=headers, data=payload, timeout=60)
+            r.raise_for_status()
+            content = r.json()["choices"][0]["message"]["content"]
+            return json.loads(content)
+        except Exception as e:
+            last_err = e
+            time.sleep(1.5 * (attempt + 1))
+    raise RuntimeError(f"LLM 호출 실패 (3회 재시도): {last_err}")
+
+
+# ---- 3. 메인 루프 -------------------------------------------------------------
+def main(in_path: Path, out_path: Path) -> None:
+    df = pd.read_csv(in_path)
+    rows = []
+    for _, row in df.iterrows():
+        prompt = (
+            f"run_id={row['run_id']}, mean={row['mean']:.3f}, "
+            f"std={row['std']:.3f}, max={row['max']:.3f}"
+        )
+        try:
+            judgement = ask_llm(prompt)
+        except Exception as e:
+            judgement = {"flag": "error", "reason": f"call_failed: {e}"}
+        rows.append({"run_id": row["run_id"], **judgement})
+        print(f"  {row['run_id']}: {judgement.get('flag'):<5} {judgement.get('reason')}")
+
+    pd.DataFrame(rows).to_csv(out_path, index=False)
+    print(f"\\nWrote {len(rows)} rows to {out_path}")
+
+
+if __name__ == "__main__":
+    src = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("summary.csv")
+    main(src, Path("commentary.csv"))
+`}
+/>
+
+### 핵심 설계 결정 4가지
+
+<Callout kind="tip" title="왜 이렇게 짰나">
+1. **System prompt에 JSON 한 줄 응답을 강제** — LLM은 자유롭게 두면 줄바꿈/마크다운을 섞어 파싱이 깨집니다. JSON 형식과 키를 못박아 둡니다.
+2. **`temperature=0.2`** — 같은 입력에 대해 매번 비슷한 답이 나오게 하여 회귀 비교가 가능.
+3. **재시도 + 점증 슬립** — 게이트웨이 일시 장애/rate limit 대응. 무한 재시도는 금지 (`retries=2` 까지).
+4. **에러를 행 단위로 흡수** — 한 행 실패가 전체 실행을 막지 않게, `flag="error"`로 표기하고 다음 행 계속.
+</Callout>
+
+## 5. 실행 흐름
+
+<ChatTranscript
+  turns={[
+    {
+      role: "user",
+      text: "터미널에서 다음 명령을 실행:\n\n  python comment.py",
+    },
+    {
+      role: "tool",
+      toolName: "load_dotenv('.env.local')",
+      text: "BASE_URL=...\nAPI_KEY=credential:TICKET-…\nMODEL_NAME=openai/gpt-oss-120b\nSYSTEM_NAME=CDS_Infra_SW",
+    },
+    {
+      role: "tool",
+      toolName: "POST {BASE_URL}",
+      text: '<<< headers: x-dep-ticket=…, Send-System-Name=CDS_Infra_SW, Prompt-Msg-Id=8c4f… >>>\n<<< body: {"model":"openai/gpt-oss-120b","messages":[…]} >>>\n>>> 200 OK <<<',
+    },
+    {
+      role: "tool",
+      toolName: "stdout (행별 요약)",
+      text: "  run_001: ok    평균/최댓값이 통상 범위 내\n  run_002: ok    표준편차가 평소보다 약간 높지만 임계 미만\n  run_017: warn  max=12.4가 통상 범위(<10)를 초과\n  ...\n  run_050: ok    정상 범위",
+    },
+    {
+      role: "tool",
+      toolName: "write commentary.csv",
+      text: "Wrote 50 rows to commentary.csv",
+    },
+  ]}
+/>
+
+## 6. 검증 방법
+
+<Callout kind="check" title="첫 실행에서 반드시 확인할 4가지">
+1. **`commentary.csv`의 행 수가 입력과 동일** (입력 50행 → 출력 50행, 'error' 포함).
+2. **flag 값 분포가 그럴듯한가**: 모든 행이 `ok`만 나오면 LLM이 형식적으로만 답하는 것일 수도. 의도적으로 max를 매우 큰 값으로 바꿔 한 행을 넣어보고 `warn`이 나오는지 확인.
+3. **응답 JSON 파싱 실패율**: stdout에 `flag=error`가 5%를 넘으면 system prompt를 더 엄격히 (예: "다른 텍스트는 절대 출력하지 마") 다듬어야 함.
+4. **재실행 시 비용/시간 추정**: 50회 호출에 걸린 wall-clock과 게이트웨이 사용량 로그를 비교. 야간 배치로 자동화하기 전 1주간 수동 실행으로 안정성 확인.
+</Callout>
+
+## 7. 언제 Roo Code 대신 직접 호출 패턴을 쓰는가
+
+| 상황 | 추천 |
+| --- | --- |
+| 1회성 탐색/분석 | **Roo Code** (예제 1~4) |
+| 매일 같은 시각에 자동 실행 | **이 예제 (직접 호출)** |
+| CI/CD에서 PR 코멘트 자동 생성 | **직접 호출** |
+| 결과를 다른 시스템(메일/사내 봇)에 전달 | **직접 호출** |
+| 사람이 인터랙티브하게 가설 검증 | **Roo Code** |
+| 게이트웨이의 매-호출 UUID 헤더가 필수인 경우 | **직접 호출** (Roo Code의 정적 헤더 한계) |
+
+## 8. 흔한 함정
+
+<Callout kind="warn" title="처음 돌릴 때 자주 만나는 에러">
+- **401 Unauthorized**: `x-dep-ticket` 누락 또는 만료. 사내 포털에서 ticket 갱신.
+- **403 Forbidden**: `Send-System-Name` 값이 등록되지 않음. 인프라팀 문의.
+- **404 Not Found**: BASE_URL의 모델 경로(`/gpt-oss/1/gpt-oss-120b/`)가 잘못됨. `.env.local` 재확인.
+- **`KeyError: 'choices'`**: 게이트웨이가 에러 응답을 `choices` 없이 반환. `r.raise_for_status()`로 200 검증 후 파싱하므로 보통 발생하지 않지만, 비-2xx 200이 오는 경우 응답 본문을 먼저 출력해 진단.
+- **응답이 한국어가 아님**: system prompt에서 "한국어로" 명시. 모델이 영어로 떨어지면 user prompt에도 한 번 더 강조.
+</Callout>
+
+<Quiz
+  id="example-5-q1"
+  question="아래 중 .env.local 처리 정책으로 가장 적절한 것은?"
+  options={[
+    "팀원 간 ticket 공유를 위해 git에 커밋해두고 README에 사용법을 적는다",
+    "본인 사번으로 발급받은 ticket을 .env.local에 두고, .gitignore에 .env*.local을 등록해 절대 커밋하지 않는다",
+    "ticket을 코드 상단 상수로 박아두고 코드 리뷰에서 한 번 합의한다",
+    "Slack DM으로 ticket을 주고받는다 (대화는 휘발되니 안전)",
+  ]}
+  correct={1}
+  explanation="ticket은 사번에 묶인 본인 자격증명입니다. 공유/커밋/메시저 전송은 모두 사고 발생 시 본인 책임으로 돌아옵니다. .env.local + .gitignore 한 가지 패턴만 사용하세요."
+/>
+
+<Quiz
+  id="example-5-q2"
+  question="comment.py가 50개 호출 중 5개에서 'flag=error'를 기록했습니다. 가장 먼저 해야 하는 일은?"
+  options={[
+    "스크립트를 그대로 다시 돌린다 — 일시 장애로 가정",
+    "재시도 회수를 늘린다 (retries=10)",
+    "5개 행의 stdout 에러 메시지를 보고 게이트웨이 응답인지 / JSON 파싱 실패인지 / 네트워크인지 분류한 뒤 그에 맞게 대응",
+    "에러 행을 commentary.csv에서 지운다",
+  ]}
+  correct={2}
+  explanation="에러는 원인이 다양합니다. 무작정 재시도하거나 숨기지 말고, 먼저 분류해서 진짜 원인(예: ticket 만료, 응답 형식 변화, 네트워크 장애)을 찾아야 합니다."
+/>

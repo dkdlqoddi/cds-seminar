@@ -27,17 +27,19 @@ export const lessons: Lesson[] = [
   {
     slug: "roo-code",
     href: "/roo-code",
-    title: "3. Roo Code 소개와 Ollama 연결",
-    summary: "VS Code 위에서 동작하는 코딩 에이전트를 사내 Ollama 엔드포인트에 연결한다.",
-    minutes: 10,
+    title: "3. Roo Code 소개와 사내 LLM 게이트웨이 연결",
+    summary:
+      "VS Code 위에서 동작하는 코딩 에이전트를 사내 GPT-OSS 게이트웨이(OpenAI Compatible)에 연결한다.",
+    minutes: 12,
     group: "도구",
   },
   {
     slug: "examples",
     href: "/examples",
-    title: "4. 실습 예제 4가지",
-    summary: "Code · Architect · Ask · Custom/MCP 모드를 Python 시나리오로 따라해본다.",
-    minutes: 25,
+    title: "4. 실습 예제 5가지",
+    summary:
+      "Code · Architect · Ask · Custom/MCP · 직접 API 호출까지 Python 시나리오로 따라해본다.",
+    minutes: 30,
     group: "예제",
   },
   {
@@ -54,7 +56,7 @@ export type Example = {
   slug: string;
   href: string;
   title: string;
-  mode: "code" | "architect" | "ask" | "custom";
+  mode: "code" | "architect" | "ask" | "custom" | "api";
   level: 1 | 2 | 3;
   summary: string;
 };
@@ -96,17 +98,27 @@ export const examples: Example[] = [
     summary:
       "보고서 톤만 다듬는 전용 모드를 만들고, filesystem MCP로 측정 폴더만 읽도록 권한을 좁힌다.",
   },
+  {
+    slug: "direct-api",
+    href: "/examples/direct-api",
+    title: "예제 5 · 사내 LLM 게이트웨이를 Python에서 직접 호출",
+    mode: "api",
+    level: 2,
+    summary:
+      "Roo Code 없이 .env.local + requests 만으로 게이트웨이를 호출해 자동화 스크립트를 만든다.",
+  },
 ];
 
 export const lessonOrder: { href: string; title: string }[] = [
   { href: "/ai-agent", title: "1. AI 에이전트란?" },
   { href: "/vs-chatbot", title: "2. 챗봇과 무엇이 다른가?" },
-  { href: "/roo-code", title: "3. Roo Code 소개와 Ollama 연결" },
+  { href: "/roo-code", title: "3. Roo Code + 사내 LLM 게이트웨이" },
   { href: "/examples", title: "4. 실습 예제" },
   { href: "/examples/code-mode", title: "예제 1 · Code Mode" },
   { href: "/examples/architect-mode", title: "예제 2 · Architect Mode" },
   { href: "/examples/ask-mode", title: "예제 3 · Ask Mode" },
   { href: "/examples/custom-mcp", title: "예제 4 · Custom + MCP" },
+  { href: "/examples/direct-api", title: "예제 5 · 게이트웨이 직접 호출" },
   { href: "/glossary", title: "5. 용어집" },
 ];
 

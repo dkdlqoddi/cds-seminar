@@ -25,8 +25,8 @@ export default function Home() {
             <span className="text-blue-600">AI 에이전트 + Roo Code</span> 입문
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-600">
-            챗봇과 무엇이 다른지부터 시작해, 사내 Ollama 엔드포인트에 연결한 Roo Code로
-            반복 업무를 자동화하는 4가지 Python 예제까지 약 {total}분 분량으로 따라가 봅니다.
+            챗봇과 무엇이 다른지부터 시작해, 사내 GPT-OSS 게이트웨이에 연결한 Roo Code로
+            반복 업무를 자동화하는 5가지 Python 예제까지 약 {total}분 분량으로 따라가 봅니다.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
@@ -85,10 +85,12 @@ export default function Home() {
               같은 파일이 무엇인지, 폴더 구조가 어떻게 생겼는지 정도는 익숙해야 합니다.
             </li>
             <li>
-              VS Code가 컴퓨터에 깔려 있고, 사내에서 안내한 Ollama 엔드포인트
-              주소(예: <code className="font-mono">http://ollama.your-corp.local:11434</code>)를 알고 있다고 가정합니다.
+              VS Code가 컴퓨터에 깔려 있고, 사내 AI 플랫폼에서 발급받은
+              <code className="font-mono"> x-dep-ticket</code>과 게이트웨이 주소
+              (예: <code className="font-mono">http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1</code>)를
+              알고 있다고 가정합니다.
             </li>
-            <li>모든 예제는 회사 데이터를 외부로 보내지 않는 로컬/사내 LLM 사용을 전제로 합니다.</li>
+            <li>모든 예제는 회사 데이터를 외부 클라우드로 보내지 않고 사내 게이트웨이로만 호출하는 것을 전제로 합니다.</li>
           </ul>
         </div>
       </section>
