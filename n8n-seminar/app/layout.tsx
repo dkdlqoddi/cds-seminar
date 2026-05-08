@@ -16,7 +16,7 @@ const mono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "n8n 자동화 입문 · 하드웨어 엔지니어용",
+    default: "n8n 자동화 입문 ·  엔지니어용",
     template: "%s · n8n 자동화 입문",
   },
   description:

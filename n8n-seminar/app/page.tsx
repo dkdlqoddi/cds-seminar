@@ -17,7 +17,7 @@ export default function Home() {
       <section className="border-b border-zinc-200 bg-gradient-to-b from-zinc-50 to-white">
         <div className="mx-auto max-w-5xl px-4 py-20 sm:px-6 sm:py-28">
           <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700">
-            CDS 세미나 · 하드웨어 엔지니어용
+            CDS 세미나 · 엔지니어용
           </p>
           <h1 className="text-4xl font-bold tracking-tight text-zinc-900 sm:text-5xl">
             코딩이 본업이 아닌 엔지니어를 위한

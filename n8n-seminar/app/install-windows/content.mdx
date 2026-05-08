@@ -72,6 +72,22 @@ PC를 옮기거나 동료에게 워크플로우를 넘길 때, **`.n8n` 폴더 �
 공유하려면 UI에서 JSON으로 export 합니다 (예제 1~5에 모두 포함됨).
 </Callout>
 
+## n8n 실행
+
+```powershell
+# powershell
+$env:GENERIC_TIMEZONE="Asia/Seoul"
+$env:N8N_DIAGNOSTICS_ENABLED="false"
+n8n
+```
+
+```cmd
+# cmd
+set GENERIC_TIMEZONE=Asia/Seoul
+set N8N_DIAGNOSTICS_ENABLED=false
+n8n
+```
+
 ## 사내 LLM 게이트웨이를 어떻게 부르는가
 
 사내 GPT-OSS 게이트웨이는 **OpenAI 호환 엔드포인트**입니다. 즉, n8n의 OpenAI 노드를

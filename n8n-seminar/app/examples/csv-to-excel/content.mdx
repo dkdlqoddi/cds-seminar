@@ -22,15 +22,37 @@
 
 ## 노드별 설정값
 
+### 0. 경로 및 파일 생성
+
+```
+# 경로 생성
+D:\\measurements\\
+D:\\measurements\\report\\  --> 결과 저장하는 Directory
+D:\\measurements\\ + {날짜} --> Data가 들어있는 Directory
+
+# 파일 생성
+D:\\measurements\\ {날짜} \\example.csv --> 처리할 csv 파일
+```
+
+example.csv 파일 내용
+
+```csv
+Name,Score,Age
+Alice,85,20
+Bob,92,25
+Charlie,78,22
+David,88,24
+Eve,95,21
+```
+
 ### 1. Schedule Trigger
 
 | 필드 | 값 |
 | --- | --- |
-| Trigger Interval | `Days` |
-| Hour | `6` |
-| Minute | `0` |
+| Trigger Interval | `Minutes` |
+| Minutes Between Triggers | `5` |
 
-### 2. Set — 어제 날짜 폴더 경로 계산
+### 2. Edit Fields — 어제 날짜 폴더 경로 계산
 
 n8n의 **Expression** 으로 어제 날짜를 그대로 식으로 넣습니다.
 
@@ -38,8 +60,11 @@ n8n의 **Expression** 으로 어제 날짜를 그대로 식으로 넣습니다.
 | --- | --- |
 | Mode | `Manual Mapping` |
 | Field Name | `folder` |
+| Field Type | `String` |
 | Field Value | `={{ "D:\\measurements\\" + $now.minus({days: 1}).toFormat("yyyy-MM-dd") }}` |
+| --- | --- |
 | Field Name | `reportPath` |
+| Field Type | `String` |
 | Field Value | `={{ "D:\\measurements\\report\\" + $now.minus({days: 1}).toFormat("yyyy-MM-dd") + ".xlsx" }}` |
 
 <Callout kind="tip" title="Expression 문법 한 줄 요약">
@@ -47,7 +72,7 @@ n8n의 **Expression** 으로 어제 날짜를 그대로 식으로 넣습니다.
 앞 노드 결과는 `$node["노드이름"].json` 으로 접근합니다.
 </Callout>
 
-### 3. Code — 폴더 안 CSV 목록화
+### 3. Code in JavaScript — 폴더 안 CSV 목록화
 
 ```javascript
 const fs = require("fs");
@@ -61,59 +86,73 @@ const files = fs.readdirSync(folder)
 return files;
 ```
 
-### 4. Read Binary File
+### 4. Read Files from Disk
 
 | 필드 | 값 |
 | --- | --- |
+| Operation | `Read File(s) From Disk` |
 | File Selector | `={{ $json.fullPath }}` |
 | Property Name | `data` |
 
-### 5. Code — CSV 파싱 + 통계
+### 5. Code in JavaScript — CSV 파싱 + 통계
 
 ```javascript
-const rows = [];
-for (const item of items) {
-  const text = item.binary.data
-    ? Buffer.from(item.binary.data.data, "base64").toString("utf8")
-    : "";
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  const header = lines[0].split(",");
-  const numericCols = header.map((_, i) => i).filter(i => i > 0);
+const results = [];
+const items = $input.all();
 
-  // 각 숫자 컬럼의 평균/표준편차
-  const stats = {};
-  for (const ci of numericCols) {
-    const vals = lines.slice(1)
-      .map(l => parseFloat(l.split(",")[ci]))
-      .filter(v => !isNaN(v));
-    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-    const std = Math.sqrt(
-      vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length
-    );
-    stats[`${header[ci]}_mean`] = Number(mean.toFixed(4));
-    stats[`${header[ci]}_std`] = Number(std.toFixed(4));
+for (let i = 0; i < items.length; i++) {
+  // 1. 'data'라는 이름의 바이너리 데이터를 안전하게 버퍼 형태로 가져옵니다.
+  // (n8n 내장 함수를 사용하여 메모리/디스크 저장 방식에 상관없이 정확히 읽어옵니다)
+  const buffer = await this.helpers.getBinaryDataBuffer(i, 'data');
+  
+  // 2. 버퍼 데이터를 사람이 읽을 수 있는 텍스트(UTF-8)로 변환
+  const csvContent = buffer.toString('utf8');
+  
+  // 3. 줄바꿈(\n 또는 \r\n)을 기준으로 각 행을 분리
+  const lines = csvContent.trim().split(/\r?\n/);
+  
+  // 4. 첫 번째 줄에서 헤더(Name, Score, Age) 추출
+  const headers = lines[0].split(',');
+  
+  // 5. 두 번째 줄부터 끝까지 실제 데이터 파싱
+  for (let j = 1; j < lines.length; j++) {
+    const values = lines[j].split(',');
+    const row = {};
+    
+    headers.forEach((header, index) => {
+      let value = values[index].trim();
+      
+      // Score와 Age는 계산하기 편하도록 숫자(Number) 타입으로 변환
+      if (header === 'Score' || header === 'Age') {
+        value = Number(value);
+      }
+      
+      row[header] = value;
+    });
+
+    // 6. JSON 결과 배열에 추가
+    results.push({ json: row });
   }
-
-  rows.push({ json: { file: item.json.name, ...stats } });
 }
-return rows;
+
+return results;
 ```
 
-### 6. Spreadsheet File
+### 6. Convert to File
 
 | 필드 | 값 |
 | --- | --- |
-| Operation | `Write to file` |
-| File Format | `xlsx` |
+| Operation | `Covert to XLSX` |
 | Put Output File in Field | `data` |
 | File Name | `report.xlsx` |
 
-### 7. Write Binary File
+### 7. Write Files from Disk
 
 | 필드 | 값 |
 | --- | --- |
-| File Name | `={{ $node["Set"].json.reportPath }}` |
-| Property Name | `data` |
+| Operation | `Write File to Disk` |
+| File Path and Name | `={{ $node["Set"].json.reportPath }}` |
+| Input Binary Field | `data` |
 
 ## Import 가능한 JSON
 
@@ -121,91 +160,208 @@ return rows;
 
 ```json
 {
-  "name": "예제1 · CSV 폴더 → 일일 Excel 보고서",
+  "name": "My workflow",
   "nodes": [
     {
       "parameters": {
-        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24 }] },
-        "triggerAtHour": 6
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
       },
       "type": "n8n-nodes-base.scheduleTrigger",
-      "name": "Schedule Trigger",
-      "position": [0, 0]
+      "typeVersion": 1.3,
+      "position": [
+        -304,
+        -96
+      ],
+      "id": "3bc9b80e-b43f-45df-a7bf-a619b2ac9f8b",
+      "name": "Schedule Trigger"
     },
     {
       "parameters": {
         "assignments": {
           "assignments": [
             {
+              "id": "6ee734d1-8d94-4951-8c6f-87625587a611",
               "name": "folder",
-              "type": "string",
-              "value": "={{ 'D:\\\\measurements\\\\' + $now.minus({days: 1}).toFormat('yyyy-MM-dd') }}"
+              "value": "={{ \"D:\\\\PERSONAL_SPACE\\\\n8n-test\\\\\" + $now.minus({days: 1}).toFormat(\"yyyy-MM-dd\") }}",
+              "type": "string"
             },
             {
+              "id": "6bc768cc-80e6-44f0-9a4c-cdc055d8c1c9",
               "name": "reportPath",
-              "type": "string",
-              "value": "={{ 'D:\\\\measurements\\\\report\\\\' + $now.minus({days: 1}).toFormat('yyyy-MM-dd') + '.xlsx' }}"
+              "value": "={{ \"D:\\\\PERSONAL_SPACE\\\\n8n-test\\\\report\\\\\" + $now.minus({days: 1}).toFormat(\"yyyy-MM-dd\") + \".xlsx\" }}",
+              "type": "string"
             }
           ]
-        }
+        },
+        "options": {}
       },
       "type": "n8n-nodes-base.set",
-      "name": "Set",
-      "position": [240, 0]
+      "typeVersion": 3.4,
+      "position": [
+        -144,
+        -96
+      ],
+      "id": "c09a8098-49c7-4161-893b-04ed8e1a429e",
+      "name": "Edit Fields"
     },
     {
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst folder = $input.first().json.folder;\nreturn fs.readdirSync(folder)\n  .filter(f => f.toLowerCase().endsWith('.csv'))\n  .map(f => ({ json: { fullPath: path.join(folder, f), name: f } }));"
+        "jsCode": "const fs = require(\"fs\");\nconst path = require(\"path\");\n\nconst folder = $input.first().json.folder;\nconst files = fs.readdirSync(folder)\n  .filter(f => f.toLowerCase().endsWith(\".csv\"))\n  .map(f => ({ json: { fullPath: path.join(folder, f), name: f } }));\n\nconsole.log(files);\n\nreturn files;"
       },
       "type": "n8n-nodes-base.code",
-      "name": "List CSVs",
-      "position": [480, 0]
+      "typeVersion": 2,
+      "position": [
+        16,
+        -96
+      ],
+      "id": "5f0b00f7-689e-4495-9e9e-8bd997a73e96",
+      "name": "Code in JavaScript"
     },
     {
       "parameters": {
         "fileSelector": "={{ $json.fullPath }}",
-        "dataPropertyName": "data"
+        "options": {}
       },
-      "type": "n8n-nodes-base.readBinaryFile",
-      "name": "Read Binary File",
-      "position": [720, 0]
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        176,
+        -96
+      ],
+      "id": "dd123872-f3d1-4205-b76f-b9336599fcc9",
+      "name": "Read/Write Files from Disk"
     },
     {
       "parameters": {
-        "jsCode": "const rows = [];\nfor (const item of items) {\n  const text = Buffer.from(item.binary.data.data, 'base64').toString('utf8');\n  const lines = text.split(/\\r?\\n/).filter(Boolean);\n  const header = lines[0].split(',');\n  const stats = { file: item.json.name };\n  for (let ci = 1; ci < header.length; ci++) {\n    const vals = lines.slice(1).map(l => parseFloat(l.split(',')[ci])).filter(v => !isNaN(v));\n    if (!vals.length) continue;\n    const mean = vals.reduce((a, b) => a + b, 0) / vals.length;\n    const std = Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length);\n    stats[header[ci] + '_mean'] = Number(mean.toFixed(4));\n    stats[header[ci] + '_std'] = Number(std.toFixed(4));\n  }\n  rows.push({ json: stats });\n}\nreturn rows;"
+        "jsCode": "const results = [];\nconst items = $input.all();\n\nfor (let i = 0; i < items.length; i++) {\n  // 1. 'data'라는 이름의 바이너리 데이터를 안전하게 버퍼 형태로 가져옵니다.\n  // (n8n 내장 함수를 사용하여 메모리/디스크 저장 방식에 상관없이 정확히 읽어옵니다)\n  const buffer = await this.helpers.getBinaryDataBuffer(i, 'data');\n  \n  // 2. 버퍼 데이터를 사람이 읽을 수 있는 텍스트(UTF-8)로 변환\n  const csvContent = buffer.toString('utf8');\n  \n  // 3. 줄바꿈(\\n 또는 \\r\\n)을 기준으로 각 행을 분리\n  const lines = csvContent.trim().split(/\\r?\\n/);\n  \n  // 4. 첫 번째 줄에서 헤더(Name, Score, Age) 추출\n  const headers = lines[0].split(',');\n  \n  // 5. 두 번째 줄부터 끝까지 실제 데이터 파싱\n  for (let j = 1; j < lines.length; j++) {\n    const values = lines[j].split(',');\n    const row = {};\n    \n    headers.forEach((header, index) => {\n      let value = values[index].trim();\n      \n      // Score와 Age는 계산하기 편하도록 숫자(Number) 타입으로 변환\n      if (header === 'Score' || header === 'Age') {\n        value = Number(value);\n      }\n      \n      row[header] = value;\n    });\n\n    // 6. JSON 결과 배열에 추가\n    results.push({ json: row });\n  }\n}\n\nreturn results;"
       },
       "type": "n8n-nodes-base.code",
-      "name": "Compute stats",
-      "position": [960, 0]
+      "typeVersion": 2,
+      "position": [
+        336,
+        -96
+      ],
+      "id": "cc53a489-0749-49b6-b863-da391476896c",
+      "name": "Code in JavaScript1"
     },
     {
       "parameters": {
-        "operation": "writeToFile",
-        "fileFormat": "xlsx",
-        "options": { "fileName": "report.xlsx" }
+        "operation": "xlsx",
+        "options": {
+          "fileName": "report.xlsx"
+        }
       },
-      "type": "n8n-nodes-base.spreadsheetFile",
-      "name": "Spreadsheet File",
-      "position": [1200, 0]
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        496,
+        -96
+      ],
+      "id": "aa2e2e41-deef-4a66-870b-012e7715b118",
+      "name": "Convert to File"
     },
     {
       "parameters": {
-        "fileName": "={{ $node[\"Set\"].json.reportPath }}",
-        "dataPropertyName": "data"
+        "operation": "write",
+        "fileName": "={{ $('Edit Fields').item.json.reportPath }}",
+        "options": {}
       },
-      "type": "n8n-nodes-base.writeBinaryFile",
-      "name": "Write Binary File",
-      "position": [1440, 0]
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        656,
+        -96
+      ],
+      "id": "5f290718-3839-485e-852e-43f64fd67e4d",
+      "name": "Read/Write Files from Disk1"
     }
   ],
+  "pinData": {},
   "connections": {
-    "Schedule Trigger": { "main": [[{ "node": "Set", "type": "main", "index": 0 }]] },
-    "Set": { "main": [[{ "node": "List CSVs", "type": "main", "index": 0 }]] },
-    "List CSVs": { "main": [[{ "node": "Read Binary File", "type": "main", "index": 0 }]] },
-    "Read Binary File": { "main": [[{ "node": "Compute stats", "type": "main", "index": 0 }]] },
-    "Compute stats": { "main": [[{ "node": "Spreadsheet File", "type": "main", "index": 0 }]] },
-    "Spreadsheet File": { "main": [[{ "node": "Write Binary File", "type": "main", "index": 0 }]] }
-  }
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "84f0782f-7394-4feb-b314-011af046e4fc",
+  "meta": {
+    "instanceId": "333378cad0222b36095f7662f6a315648527ec1090bb7e2150d78be6871f25a2"
+  },
+  "id": "bnxMdQXK2mdmg4mE",
+  "tags": []
 }
 ```
 
