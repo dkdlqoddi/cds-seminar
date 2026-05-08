@@ -10,9 +10,10 @@
   ]}
 />
 
-<Callout kind="warn" title="Node.js 22가 아니라 20 LTS를 권장합니다">
-n8n은 LTS 메이저 버전을 따라가지만, 사내 사설 npm 미러에서 최신 Node 빌드가 늦게 들어오는 경우가
-있습니다. **20 LTS**가 가장 트러블이 적은 선택입니다.
+<Callout kind="check" title="사내에서 Node.js 설치하기">
+- Windows용 exe파일 설치 (x64) https://nodejs.org/en/download
+- npm config set registry https://repo.samsungds.net/artifactory/api/npm/npm-remote/
+- cmd 또는 powershell에서 npm 확인 (where npm 또는 npm -v)
 </Callout>
 
 ## 1분 시작: `npx n8n`
