@@ -97,19 +97,6 @@ n8n
 따라서 이 세미나에서는 **항상 HTTP Request 노드** 를 씁니다. 더 단순하고, 무엇이
 어디로 나가는지 그대로 보입니다.
 
-### Credential 만들기
-
-좌측 메뉴 → **Credentials** → **Create Credential** → 검색창에 "Header Auth" 입력 →
-다음과 같이 채웁니다:
-
-| 필드 | 값 |
-| --- | --- |
-| Name | `사내 GPT-OSS 게이트웨이` |
-| Header Name | `x-dep-ticket` |
-| Header Value | (사내 AI 플랫폼에서 발급받은 ticket 문자열) |
-
-이 Credential 하나를 만들어두면, 모든 HTTP Request 노드에서 재사용할 수 있습니다.
-
 ### 첫 워크플로우: 게이트웨이에 한 마디 보내고 응답 받기
 
 <WorkflowDiagram
@@ -124,26 +111,72 @@ n8n
 
 ```json
 {
-  "method": "POST",
-  "url": "http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions",
-  "authentication": "genericCredentialType",
-  "genericAuthType": "httpHeaderAuth",
-  "sendHeaders": true,
-  "headerParameters": {
-    "parameters": [
-      { "name": "Content-Type", "value": "application/json" }
-    ]
+  "parameters": {
+    "method": "POST",
+    "url": "http://apigw-stg.samsungds.net:8000/gpt-oss/1/gpt-oss-120b/v1/chat/completions",
+    "sendHeaders": true,
+    "headerParameters": {
+      "parameters": [
+        {
+          "name": "x-dep-ticket",
+          "value": "credential:TICKET-3d4899d8-cb3a-449b-8d07-f08c520ce127:ST0000101612-null:df58eZN7T5WUmXug6CVDCAmuexNSxPRK6nhFJd0lylYw:-3:ZGY1OGVaTjdUNVdVbVh1ZzZDVkRDQW11ZXhOU3hQUks2bmhGSmQwbHlsWXc=:signature=n2YyNp9_aOjXGubInK1J6QEcFI7xvpFDQTCKWtJWvjLs0JJ5X6w75HGxchNqOUd5IsvhdQVfZV2DbO3rFXbHTfDYu5i2mb9D_4GG-YnOK4IVzsUNKKl_1xQ=="
+        },
+        {
+          "name": "Send-System-Name",
+          "value": "CDS_Infra_SW"
+        },
+        {
+          "name": "User-Id",
+          "value": "jaeyul.woo"
+        },
+        {
+          "name": "User-Type",
+          "value": "jaeyul.woo"
+        },
+        {
+          "name": "Prompt-Msg-Id",
+          "value": "550e8400-e29b-41d4-a716-446655440000"
+        },
+        {
+          "name": "Completion-Msg-Id",
+          "value": "550e8400-e29b-41d4-a716-446655440001"
+        },
+        {
+          "name": "Accept",
+          "value": "text/event-stream; charset=utf-8"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ]
+    },
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "{
+      "model": "gpt-oss-120b",
+      "messages": [
+        {
+          "role": "system",
+          "content": "당신은 반도체 측정 데이터를 분석하는 어시스턴트입니다."
+        },
+        {
+          "role": "user",
+          "content": "측정 데이터에서 일반적으로 봐야 할 통계량 3가지를 한 줄씩 알려줘."
+        }
+      ],
+      "temperature": 0.2
+    }",
+    "options": {}
   },
-  "sendBody": true,
-  "specifyBody": "json",
-  "jsonBody": {
-    "model": "gpt-oss-120b",
-    "messages": [
-      { "role": "system", "content": "당신은 반도체 측정 데이터를 분석하는 어시스턴트입니다." },
-      { "role": "user", "content": "측정 데이터에서 일반적으로 봐야 할 통계량 3가지를 한 줄씩 알려줘." }
-    ],
-    "temperature": 0.2
-  }
+  "type": "n8n-nodes-base.httpRequest",
+  "typeVersion": 4.4,
+  "position": [
+    208,
+    -96
+  ],
+  "id": "b4bcf732-d53d-4d95-bf19-761a50b8efe1",
+  "name": "HTTP Request"
 }
 ```
 
