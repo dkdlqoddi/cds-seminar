@@ -1,0 +1,116 @@
+## 왜 Block 이 필요한가
+
+지금까지 우리는 DB 자격증명을 **`DATABASE_URL` 환경변수**로 줬습니다. 이 방식의 한계는 분명합니다.
+
+- 비밀번호가 평문으로 환경변수/CI 로그에 남는다.
+- 사람이 바뀔 때마다 사내 PC 마다 환경변수를 다시 설정해줘야 한다.
+- prod / staging 처럼 환경이 늘어나면 어느 PC 가 어느 DB 를 보는지 추적이 어렵다.
+
+**Prefect Block** 은 이런 정보를 **사내 Prefect 서버 한 곳에 저장**해 두고, 코드에서는
+이름으로만 불러 쓰는 도구입니다.
+
+## Block 한 번 저장해두기 (1회성)
+
+UI 에서 **Blocks → + → Secret** 으로 만들거나, 한 줄 Python 으로 등록 가능합니다.
+
+<CodeBlock
+  filename="register_block.py (한 번만)"
+  lang="python"
+  code={`from prefect.blocks.system import Secret
+
+# UI 에서도 보이고, 모든 worker / flow 가 이 이름으로 불러 쓸 수 있게 됨
+Secret(value="postgres").save("postgres-password", overwrite=True)`}
+/>
+
+이후 사내 Prefect 서버 UI 의 **Blocks** 탭에 `postgres-password` 가 마스킹된 채 보입니다.
+
+## Flow 코드에서 불러 쓰기
+
+<CodeBlock
+  filename="flows/05_parameters_blocks.py"
+  lang="python"
+  code={`from prefect import flow, get_run_logger
+from prefect.blocks.system import Secret
+
+# 비밀이 아닌 부분(host, user, port, db) 은 코드에 둬도 무방.
+PG_HOST, PG_PORT, PG_DB, PG_USER = "12.81.225.154", 5432, "postgres", "postgres"
+
+
+@flow(name="report-with-secret-block", log_prints=True)
+def process_with_secret(lot_id: str, report_path: str) -> None:
+    logger = get_run_logger()
+    pw = Secret.load("postgres-password").get()              # ← 핵심
+    db_url = f"postgresql+psycopg2://{PG_USER}:{pw}@{PG_HOST}:{PG_PORT}/{PG_DB}"
+    logger.info("running for lot_id=%s with %s://%s@%s:%s/%s",
+                lot_id, "postgresql+psycopg2", PG_USER, PG_HOST, PG_PORT, PG_DB)
+    process_report(report_path=report_path, db_url=db_url)
+
+
+def main() -> None:
+    process_with_secret.serve(
+        name="A-line-on-demand",
+        parameters={
+            "lot_id": "A001",
+            "report_path": str(HERE / "sample_reports" / "LOT_A001_2026-05-07_08-01.json"),
+        },
+        tags=["seminar", "A-line"],
+        description="A 라인 처리 (수동 실행 전용)",
+    )`}
+/>
+
+코드 안에 비밀번호가 더 이상 보이지 않습니다. 비밀번호가 바뀌어도 **UI 에서 Block 값만 수정**하면
+모든 deployment 가 즉시 새 비밀번호로 동작합니다.
+
+## 한 단계 더 — SqlAlchemyConnector Block
+
+DB URL 통째로 (자격증명 + host + 옵션) 를 한 Block 에 묶어 두는 방식도 있습니다.
+`prefect-sqlalchemy` 패키지를 설치하면 사용 가능합니다.
+
+<CodeBlock
+  lang="python"
+  code={`from prefect_sqlalchemy import SqlAlchemyConnector
+
+# 한 번만 등록 (UI 또는 코드)
+SqlAlchemyConnector(
+    connection_info={
+        "driver": "postgresql+psycopg2",
+        "username": "postgres", "password": "postgres",
+        "host": "12.81.225.154", "port": 5432,
+        "database": "postgres",
+    }
+).save("internal-postgres", overwrite=True)
+
+# 이후 flow 어디서든
+with SqlAlchemyConnector.load("internal-postgres").get_connection(begin=True) as conn:
+    rows = conn.execute("SELECT count(*) FROM report_results").fetchall()`}
+/>
+
+## 같은 deployment 를 다른 파라미터로 돌리기
+
+`flow.serve(...)` 의 `parameters` 는 **기본값**입니다. UI 의 **"Run"** 버튼 화면에서 그 자리에서 파라미터를
+덮어 쓰며 실행할 수 있습니다.
+
+| 시나리오 | parameters |
+| --- | --- |
+| 정기 실행 (cron) | 기본값 그대로 → A 라인 |
+| 사용자가 즉시 한 번만 | `{lot_id="X999", report_path="/share/adhoc.json"}` |
+| 같은 코드의 두 번째 deployment | `{lot_id="B777", report_path="/share/B-line/.."}` |
+
+<Callout kind="check" title="이 예제로 가져갈 것">
+1. 비밀번호는 **코드/환경변수가 아니라 Block** 에 둔다.
+2. 같은 flow 를 입력만 바꿔 여러 deployment 로 등록하는 패턴.
+3. host/user/db 처럼 **비밀이 아닌 설정**은 코드에 두는 편이 가독성이 더 좋다 — Block 에 모든 걸 욱여넣지 않는다.
+</Callout>
+
+<Quiz
+  id="ex5-q1"
+  question="Secret Block 으로 DB 비밀번호를 옮긴 뒤 가장 효과를 보는 운용 시나리오는?"
+  options={[
+    "Python 가상환경을 매번 새로 만들지 않아도 되는 것",
+    "DB 비밀번호가 만료돼 회전될 때 코드/배포를 손대지 않고 UI 한 번만 수정하면 모든 worker 가 즉시 새 비밀번호를 쓰는 것",
+    "Prefect 서버 없이도 flow 가 돌게 되는 것",
+    "보고서 파일이 망가져도 자동 복구되는 것",
+  ]}
+  correct={1}
+  explanation="Block 의 핵심 가치는 자격증명·설정의 '회전(rotation)' 입니다. 비밀번호가 바뀌어도 deployment 를 다시 등록하거나 코드를 변경하지 않습니다."
+/>

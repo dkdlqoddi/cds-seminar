@@ -1,0 +1,137 @@
+## 사전 준비
+
+- **Python 3.10 이상** 이 사내 PC에 설치되어 있어야 합니다. (`python --version` 으로 확인)
+- 사내 Prefect 서버(`http://12.81.225.154:10000`) 와 Postgres(`12.81.225.154:5432`) 에 네트워크가 닿는 PC 여야 합니다.
+- 별도 권한 없이 본인 계정의 가상환경에 설치합니다. 관리자 권한 필요 없습니다.
+
+## 1. 가상환경 + Prefect 설치
+
+폴더 어디서든 다음을 실행합니다.
+
+```bash
+mkdir prefect-seminar && cd prefect-seminar
+python -m venv .venv
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+# macOS / Linux
+source .venv/bin/activate
+
+pip install --upgrade pip
+pip install "prefect>=3.0" "sqlalchemy>=2.0" "psycopg2-binary"
+```
+
+설치 확인:
+
+```bash
+prefect version
+```
+
+<Callout kind="warn" title="사내망에서 pip가 막히면">
+사내 사설 PyPI 가 있다면 `--index-url` 또는 `~/.config/pip/pip.conf` 로 지정하세요.
+별도 안내가 없다면 사내 IT 헬프데스크에 "PyPI mirror 주소"를 문의하세요.
+</Callout>
+
+## 2. 사내 Prefect 서버에 프로파일 만들기
+
+Prefect 는 여러 서버를 **프로파일** 단위로 전환합니다. 사내용 프로파일을 하나 만들어 둡니다.
+
+```bash
+prefect profile create cds-internal
+prefect profile use cds-internal
+
+prefect config set PREFECT_API_URL="http://12.81.225.154:10000/api"
+```
+
+확인:
+
+```bash
+prefect config view
+# PREFECT_API_URL='http://12.81.225.154:10000/api'
+```
+
+<Callout kind="check" title="포인트">
+- `PREFECT_API_URL` 의 마지막에 `/api` 가 붙는다는 점을 잊지 마세요. 브라우저 UI 주소(`/`)와 다릅니다.
+- 한 PC에서 사내 / 로컬 두 환경을 모두 쓰려면 `prefect profile create local-dev` 도 만들어 두면 편합니다.
+</Callout>
+
+## 3. 연결 확인 (한 줄)
+
+```bash
+prefect deployment ls
+```
+
+서버가 잘 붙으면 빈 표 또는 기존 deployment 목록이 나옵니다.
+`Connection refused` 등이 보이면 사내 방화벽 / VPN / 프록시 설정을 점검하세요.
+
+브라우저로 `http://12.81.225.154:10000` 에 접속하면 UI 도 보입니다.
+
+## 4. Postgres 연결 환경변수
+
+이 자료의 메인 예제(보고서 → outfeed → Postgres)는 **`DATABASE_URL` 환경변수**로 DB 연결 문자열을 주입받습니다.
+사내 Postgres 정보는 다음과 같습니다.
+
+| 항목 | 값 |
+| --- | --- |
+| host | `12.81.225.154` |
+| port | `5432` |
+| database | `postgres` |
+| user | `postgres` |
+| password | `postgres` |
+
+PowerShell:
+
+```powershell
+$env:DATABASE_URL = "postgresql+psycopg2://postgres:postgres@12.81.225.154:5432/postgres"
+```
+
+bash / zsh:
+
+```bash
+export DATABASE_URL="postgresql+psycopg2://postgres:postgres@12.81.225.154:5432/postgres"
+```
+
+<Callout kind="warn" title="실제 운영에서는">
+이 세미나에서는 단순화를 위해 비밀번호를 환경변수로 둡니다. 실제 운용 시에는
+**Prefect Block (Secret 또는 SqlAlchemyConnector)** 에 자격증명을 저장해 코드/환경변수에서 분리하세요.
+관련 내용은 예제 5에서 다룹니다.
+</Callout>
+
+## 5. 로컬 전용 모드 (서버 없이 시험)
+
+지금 이 PC 가 사내 Prefect 서버에 닿지 않거나, 그냥 손으로 시험만 해보고 싶다면
+다음 세 가지가 그대로 동작합니다.
+
+1. `prefect profile use ephemeral` 로 로컬 임시 서버 사용 (또는 `PREFECT_API_URL` 미설정)
+2. `python flows/01_hello_flow.py` 처럼 평범하게 Python 으로 실행
+3. DB 가 없으면 `DATABASE_URL=sqlite:///flows/local_test.db` 로 SQLite 사용
+
+이 세 가지가 가능한 이유는 Prefect 가 "서버에 등록되지 않은 flow는 실패하는" 도구가 아니라,
+**서버 없이도 그대로 도는 평범한 Python 함수**이기 때문입니다.
+
+## 6. 보고서 폴더 / outfeed 폴더 약속
+
+이 자료의 예제는 다음 폴더 구조를 가정합니다. 사내 PC에서 실습할 때 본인 환경에 맞춰 바꿔 주세요.
+
+<FileTree
+  label="권장 폴더 구조"
+  tree={[
+    {
+      kind: "dir",
+      name: "C:\\engineer\\prefect-seminar\\",
+      children: [
+        { kind: "dir", name: "flows\\", children: [
+          { kind: "file", name: "03_report_to_postgres.py" },
+          { kind: "dir", name: "sample_reports\\", children: [
+            { kind: "file", name: "LOT_A001_2026-05-07_08-01.json", note: "장비가 떨군 JSON 보고서" },
+          ]},
+          { kind: "dir", name: "outfeed\\", children: [
+            { kind: "file", name: "<lot>_<wafer>_<ts>_result.json", note: "flow 가 만들어 떨굴 결과 파일" },
+          ]},
+        ]},
+      ],
+    },
+  ]}
+/>
+
+이제 4강에서 실제 예제를 돌려봅니다.

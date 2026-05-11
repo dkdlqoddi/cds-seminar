@@ -1,0 +1,15 @@
+node_modules/
+.next/
+out/
+build/
+.DS_Store
+*.tsbuildinfo
+next-env.d.ts
+.env*.local
+
+# Python flow scratch
+flows/__pycache__/
+flows/*.pyc
+flows/local_test.db
+flows/outfeed/
+flows/.venv/

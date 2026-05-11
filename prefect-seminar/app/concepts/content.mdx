@@ -1,0 +1,130 @@
+## 한눈에 보기
+
+| 용어 | 한 줄 정의 | 코드/UI에서 언제 만나는가 |
+| --- | --- | --- |
+| **Flow** | 한 번의 작업 단위 전체 (= 워크플로우 1개) | `@flow` 데코레이터를 붙인 함수 |
+| **Task** | Flow 안의 한 단계 (재시도·캐시·로그가 자동) | `@task` 데코레이터를 붙인 함수 |
+| **Run** | Flow/Task의 한 번의 실행 기록 | UI의 "Flow Run" 목록 |
+| **Deployment** | Flow를 서버에 등록한 단위 (이름·스케줄·파라미터 포함) | `flow.serve(...)` 또는 `prefect deploy` |
+| **Work Pool / Worker** | 등록된 Flow가 실제로 어디서 돌지를 결정 | UI > Work Pools, 사내 PC에서 `prefect worker start` |
+| **Block** | 재사용 가능한 설정 덩어리 (DB 자격증명·파일 경로 등) | UI > Blocks, 코드에서 `Block.load("name")` |
+
+다섯 개를 한 문장으로 묶으면:
+
+> **Flow** 안의 **Task** 들이 실행되는 한 번을 **Run** 이라 부르고, 이 Run 을 사내 서버에 자동 등록하면
+> **Deployment**, 그 Deployment 가 **Worker** 가 가져갈 수 있도록 대기하는 줄이 **Work Pool**,
+> 비밀번호 같은 정보는 **Block** 에 따로 저장한다.
+
+## Flow와 Task: "함수에 데코레이터 한 줄"
+
+Prefect에서 가장 중요한 두 개념입니다.
+
+```python
+from prefect import flow, task
+
+@task(retries=3)                # 실패 시 3번 자동 재시도
+def parse_report(path: str) -> dict:
+    ...
+    return {"yield": 0.97, "fail_count": 4}
+
+@flow(name="process-report")    # 워크플로우 한 단위
+def process_report(path: str) -> None:
+    summary = parse_report(path)
+    print(summary)
+
+if __name__ == "__main__":
+    process_report("D:/reports/A001.json")  # 그냥 python으로 실행해도 됨
+```
+
+<Callout kind="tip" title="규칙">
+- `@task`를 붙이면 **그 함수의 한 번의 호출**이 Prefect의 단위가 됩니다.
+- `@flow`를 붙인 함수가 **여러 task를 묶는 워크플로우**가 됩니다.
+- task 함수 안에서 다른 task 를 호출해도 됩니다 (subflow).
+- 일반 Python 함수처럼 호출해도 됩니다. Prefect 서버 없이도 그대로 동작합니다.
+</Callout>
+
+## State: task가 지금 어떤 상태인가
+
+Task와 Flow는 매 순간 다음 중 하나의 **State** 에 있습니다.
+
+<FlowDiagram
+  caption="실패한 task는 retries 설정에 따라 자동으로 다시 Running으로 돌아옵니다."
+  steps={[
+    { type: "input", name: "Pending", detail: "실행 대기 중" },
+    { type: "task", name: "Running", detail: "지금 도는 중" },
+    { type: "output", name: "Completed", detail: "성공" },
+    { type: "db", name: "Failed", detail: "예외 발생" },
+  ]}
+/>
+
+이 State 변화가 그대로 사내 Prefect 서버 UI에 기록되기 때문에, 어느 단계에서 멈췄는지가 한눈에 보입니다.
+
+## Deployment: 같은 flow를 서버에 "이름 붙여 등록"
+
+같은 `process_report` flow 라도 두 가지 deployment 를 만들 수 있습니다.
+
+| Deployment 이름 | 어떤 입력 | 언제 도는가 |
+| --- | --- | --- |
+| `process-report/A-line-hourly` | A 라인 보고서 폴더 | 매시 정각 |
+| `process-report/B-line-on-demand` | B 라인 보고서 폴더 | 사용자가 UI에서 "Run" 버튼 클릭 |
+
+코드는 한 벌이지만, 서버에 등록된 단위가 둘이라는 뜻입니다. 보고서 종류가 늘어날 때 Python 코드를 복사하지 않아도 됩니다.
+
+## Work Pool과 Worker: "누가 실제로 돌리는가"
+
+<Callout kind="warn" title="가장 헷갈리는 부분">
+Prefect 서버는 "이 flow 를 지금 돌려야 한다"는 사실만 기록합니다.
+**실제 Python 코드를 도는 것은 사내 어딘가에서 동작 중인 Worker** 입니다.
+
+- **Work Pool**: deployment 가 대기하는 "줄". 이름만 있는 큐라고 생각하세요.
+- **Worker**: 사내 PC/서버에서 `prefect worker start --pool default` 로 띄워놓는 프로세스. Work Pool에서 일을 가져갑니다.
+</Callout>
+
+가장 단순한 운용은 다음과 같습니다.
+
+<FlowDiagram
+  caption="사내 PC 한 대에 worker만 띄워두면 그 PC가 모든 deployment 를 도는 일꾼이 됩니다."
+  steps={[
+    { type: "schedule", name: "Schedule", detail: "매시 정각 (cron)" },
+    { type: "input", name: "Deployment", detail: "process-report/A-line-hourly" },
+    { type: "task", name: "Work Pool", detail: "default-pool (대기 큐)" },
+    { type: "output", name: "Worker", detail: "사내 PC의 prefect worker" },
+  ]}
+/>
+
+## Block: 비밀번호와 설정을 코드에서 분리
+
+DB 자격증명·파일 경로·API 키 같은 값을 코드에 박지 않고 UI에서 관리하기 위한 도구입니다.
+
+```python
+from prefect.blocks.system import Secret
+
+db_password = Secret.load("postgres-password").get()  # UI에 저장한 값을 불러옴
+```
+
+같은 코드를 dev/staging/prod 어디에 배포해도 Block 만 바꿔치면 자동으로 적절한 비밀번호를 씁니다.
+
+## 비유 한 번 더: 식당에 빗대면
+
+| 식당 | Prefect |
+| --- | --- |
+| 메뉴판 (요리법) | Flow / Task 코드 |
+| 주문서 한 장 | Flow Run |
+| 주방에 붙은 영업시간 표 | Schedule |
+| "오늘은 누가 만든 라면" 이라는 한 줄 메모 | Deployment |
+| 주방 한쪽의 "주문 대기 줄" | Work Pool |
+| 라면 끓이는 실제 요리사 | Worker |
+| 식당 비상금 금고 (월급 정보 등) | Block |
+
+<Quiz
+  id="concepts-q1"
+  question="사내 Prefect 서버에 deployment를 등록하고 cron으로 매시간 실행되도록 했습니다. 그런데 정작 시간이 되어도 flow가 돌지 않습니다. 가장 먼저 의심해야 할 것은?"
+  options={[
+    "코드에 @flow 데코레이터가 빠진 것",
+    "Work Pool에 연결된 Worker가 한 대도 떠 있지 않은 것",
+    "DB 비밀번호 Block 이 만료된 것",
+    "Prefect 버전이 너무 최신인 것",
+  ]}
+  correct={1}
+  explanation="Prefect 서버는 '돌아야 한다'를 기록만 합니다. 실제로 코드를 돌리는 것은 Worker 프로세스이고, Worker가 한 대도 떠 있지 않으면 deployment 는 영원히 'Late' 상태로 대기합니다. 가장 흔한 초기 함정입니다."
+/>

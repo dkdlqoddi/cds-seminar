@@ -1,0 +1,21 @@
+{
+  "lot_id": "C314",
+  "wafer_id": "W07",
+  "equipment": "TESTER-07",
+  "operator": "ENG_CHOI",
+  "started_at": "2026-05-07T11:58:00",
+  "tests": [
+    {"site": 1, "name": "Vth",   "value": 0.515, "spec_low": 0.45,  "spec_high": 0.55, "unit": "V"},
+    {"site": 2, "name": "Vth",   "value": 0.501, "spec_low": 0.45,  "spec_high": 0.55, "unit": "V"},
+    {"site": 3, "name": "Vth",   "value": 0.527, "spec_low": 0.45,  "spec_high": 0.55, "unit": "V"},
+    {"site": 4, "name": "Vth",   "value": 0.499, "spec_low": 0.45,  "spec_high": 0.55, "unit": "V"},
+    {"site": 1, "name": "Idsat", "value": 1.005, "spec_low": 0.95,  "spec_high": 1.05, "unit": "mA"},
+    {"site": 2, "name": "Idsat", "value": 0.989, "spec_low": 0.95,  "spec_high": 1.05, "unit": "mA"},
+    {"site": 3, "name": "Idsat", "value": 1.012, "spec_low": 0.95,  "spec_high": 1.05, "unit": "mA"},
+    {"site": 4, "name": "Idsat", "value": 1.026, "spec_low": 0.95,  "spec_high": 1.05, "unit": "mA"},
+    {"site": 1, "name": "Ioff",  "value": 0.018, "spec_low": 0.0,   "spec_high": 0.05, "unit": "uA"},
+    {"site": 2, "name": "Ioff",  "value": 0.026, "spec_low": 0.0,   "spec_high": 0.05, "unit": "uA"},
+    {"site": 3, "name": "Ioff",  "value": 0.017, "spec_low": 0.0,   "spec_high": 0.05, "unit": "uA"},
+    {"site": 4, "name": "Ioff",  "value": 0.022, "spec_low": 0.0,   "spec_high": 0.05, "unit": "uA"}
+  ]
+}

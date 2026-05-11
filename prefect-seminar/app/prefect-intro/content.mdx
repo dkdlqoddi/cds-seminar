@@ -1,0 +1,91 @@
+## 정의: 한 문장으로
+
+**Prefect**는 이미 가지고 있는 Python 함수(스크립트)에 데코레이터 두 개(`@flow`, `@task`)를 붙이는 것만으로,
+**자동 재시도 · 로그 수집 · 스케줄 실행 · UI 모니터링**을 얻게 해주는 오픈소스 **워크플로우 오케스트레이터**입니다.
+
+핵심은 단 두 줄입니다.
+
+```python
+from prefect import flow, task
+
+@task
+def parse_report(path: str) -> dict: ...
+
+@flow
+def process_report(path: str) -> None:
+    data = parse_report(path)
+    ...
+```
+
+`process_report("D:/reports/A001.json")` 처럼 평범한 Python 함수로 호출해도 그대로 돌아갑니다.
+다만 Prefect 서버에 등록(deploy)해두면, 같은 함수가 **사내 서버에서 매시간 자동 실행**되고
+**실패 시 자동 재시도**되며 **UI에서 실패 지점을 클릭으로 추적**할 수 있게 됩니다.
+
+## 익숙한 비유: cron + 매크로 + Jenkins 파이프라인을 합친 것
+
+<Callout kind="tip" title="비유로 이해하기">
+**cron / Windows 작업 스케줄러**처럼 Python 스크립트를 정해진 시간에 돌리지만,
+스크립트가 어디서 멈췄는지·어떤 입력으로 돌았는지 **로그를 따로 챙길 필요가 없습니다.**
+
+**Excel 매크로 / Python 스크립트**처럼 반복 작업을 자동화하지만, 매크로는 PC에 갇혀 있고
+스크립트는 누가 언제 돌렸는지 추적이 어렵습니다. Prefect는 **모든 실행이 서버에 기록**됩니다.
+
+**Jenkins 파이프라인**처럼 단계별 재시도와 로그가 남지만, Jenkins는 빌드/배포에,
+Prefect는 **데이터 처리·DB 적재·보고서 가공** 같은 일에 더 잘 맞습니다.
+</Callout>
+
+## n8n과 무엇이 다른가? (이미 n8n 세미나를 들었다면)
+
+| | n8n | Prefect |
+| --- | --- | --- |
+| 만드는 방식 | 노드를 그림으로 연결 | Python 함수에 데코레이터 |
+| 진입 장벽 | 코딩 거의 안 해도 됨 | Python 기초 필요 |
+| 복잡한 데이터 처리 | HTTP/IF/Set 노드를 길게 이어 붙여야 함 | numpy / pandas / sqlalchemy 그대로 사용 |
+| 디버깅 | 노드 단위 입출력 검사 | 일반 Python 디버거 그대로 사용 |
+| 어울리는 일 | 알림·메일·HTTP를 잇는 사무 자동화 | **측정 데이터 파싱, 보고서 가공, DB 적재** |
+
+엄밀한 데이터 변환이 많고, 그 결과를 Postgres 같은 DB에 적재해야 한다면 **Prefect 쪽이 거의 항상 편합니다.**
+
+## Prefect가 자동으로 해주는 일 4가지
+
+워크플로우 오케스트레이터의 가치는 결국 "무엇을 자동으로 해주는가"입니다.
+
+1. **재시도 (retry)** — 네트워크 실패·DB 일시 단절 시 코드 변경 없이 N번 자동 재시도
+2. **상태 추적 (state)** — 각 task가 Pending → Running → Completed/Failed 중 어디인지 기록
+3. **스케줄 (schedule)** — 크론 / interval / 특정 시각으로 자동 실행
+4. **관측 (observability)** — 사내 Prefect 서버 UI에서 실행 history·실패한 task의 로그·입력 파라미터 클릭 한 번에 확인
+
+<Callout kind="check" title="언제 쓰면 좋은가">
+**"Python으로 짜면 100줄짜리 스크립트인데, 매시간 돌고 싶고, 실패하면 알아야 하고,
+입력값이 바뀌어가며 며칠마다 돌아야 한다"** — 이런 상황이면 Prefect가 거의 항상 정답입니다.
+
+특히 **보고서 파일 → 파싱 → DB 적재**처럼 입력이 매번 다른 일은 cron으로는 기록 추적이 어려운데,
+Prefect는 어떤 파일로 돌렸고 결과는 무엇이었는지를 자동으로 남깁니다.
+</Callout>
+
+## Prefect Cloud vs 사내 Prefect 서버
+
+Prefect는 두 가지 운용 모델이 있습니다.
+
+| 항목 | Prefect Cloud (외부 SaaS) | 사내 Prefect 서버 (Self-hosted) |
+| --- | --- | --- |
+| 비용 | 사용량 기반 유료 | 무료 (오픈소스) |
+| 사내망 자원 접근 | 어려움 | 가능 (사내 Postgres·파일서버) |
+| 설치 | 회원가입만 | `prefect server start` 한 줄 |
+| 우리 환경 | 사내 데이터 외부 반출 불가 → 사용 불가 | **이 세미나가 다루는 환경** |
+
+이 자료의 모든 예제는 **사내 Prefect 서버**(`http://12.81.225.154:10000`)를 가정합니다.
+인터넷 차단 PC에서 그대로 사용 가능합니다.
+
+<Quiz
+  id="prefect-intro-q1"
+  question="다음 중 Prefect보다 다른 도구가 더 어울리는 작업은 무엇일까요?"
+  options={[
+    "장비가 떨어뜨린 JSON 보고서를 매시간 모아 Postgres에 적재",
+    "측정 폴더의 새 파일을 감지해 평균/표준편차를 계산하고 결과 Excel을 만들기",
+    "장비에서 들어오는 100 kHz 신호를 ms 단위로 실시간 FFT 처리",
+    "어제자 측정 데이터를 LLM에 보내 한 문단 요약을 만든 뒤 메일로 발송",
+  ]}
+  correct={2}
+  explanation="Prefect는 ms 단위 실시간 신호 처리에는 어울리지 않습니다. 100 kHz FFT는 LabVIEW나 NumPy/SciPy처럼 데이터 가까이서 도는 도구의 영역입니다. 나머지 셋은 모두 Prefect의 핵심 활용 사례입니다."
+/>

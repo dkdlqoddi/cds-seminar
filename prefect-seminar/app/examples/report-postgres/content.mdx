@@ -1,0 +1,379 @@
+## 시나리오
+
+장비가 떨군 측정 보고서(JSON) 가 공유 폴더에 떨어집니다. 이걸 받아서:
+
+1. 파일을 읽고 파싱한다.
+2. pass / fail / yield / 통계를 정리한 **outfeed 파일**(JSON) 을 별도 폴더에 떨군다.
+3. 같은 결과를 Postgres `report_results` 테이블에 한 행으로 적재한다.
+4. 같은 lot_id 의 최근 결과 N건을 다시 조회해 로그로 남긴다.
+
+이 네 단계를 **하나의 flow** 에 묶고, 같은 코드를 **사내 Postgres** 에서도 **로컬 SQLite** 에서도 그대로 돌립니다.
+
+<FlowDiagram
+  caption="입력은 JSON 파일 경로 한 개. 출력은 outfeed JSON + DB row + 조회 로그."
+  steps={[
+    { type: "input", name: "report_path", detail: "예: D:/reports/A001.json" },
+    { type: "task", name: "read_report", detail: "JSON → dict (retries=2)" },
+    { type: "task", name: "parse_report", detail: "pass/fail/yield/통계" },
+    { type: "io", name: "write_outfeed", detail: "outfeed/<lot>_..._result.json" },
+    { type: "db", name: "upsert_to_db", detail: "report_results 한 행 INSERT" },
+    { type: "output", name: "query_recent", detail: "같은 lot 최근 N건 조회" },
+  ]}
+/>
+
+## 보고서 입력 형식
+
+dummy 보고서는 `flows/sample_reports/` 에 5개가 있습니다. 한 파일은 다음과 같이 생겼습니다.
+
+<CodeBlock
+  filename="flows/sample_reports/LOT_A001_2026-05-07_08-01.json"
+  lang="json"
+  code={`{
+  "lot_id": "A001",
+  "wafer_id": "W01",
+  "equipment": "TESTER-03",
+  "operator": "ENG_KIM",
+  "started_at": "2026-05-07T08:01:00",
+  "tests": [
+    {"site": 1, "name": "Vth",   "value": 0.512, "spec_low": 0.45, "spec_high": 0.55, "unit": "V"},
+    {"site": 2, "name": "Vth",   "value": 0.518, "spec_low": 0.45, "spec_high": 0.55, "unit": "V"},
+    {"site": 1, "name": "Idsat", "value": 1.024, "spec_low": 0.95, "spec_high": 1.05, "unit": "mA"},
+    {"site": 2, "name": "Idsat", "value": 1.018, "spec_low": 0.95, "spec_high": 1.05, "unit": "mA"},
+    {"site": 1, "name": "Ioff",  "value": 0.012, "spec_low": 0.0,  "spec_high": 0.05, "unit": "uA"}
+    /* … 12개 측정점 … */
+  ]
+}`}
+/>
+
+## DB 스키마
+
+운영 환경에서는 다음 DDL 을 한 번 실행해 테이블을 만들어 둡니다.
+
+<CodeBlock
+  filename="flows/db_schema.sql"
+  lang="sql"
+  code={`CREATE TABLE IF NOT EXISTS report_results (
+    id              SERIAL      PRIMARY KEY,
+    lot_id          TEXT        NOT NULL,
+    wafer_id        TEXT        NOT NULL,
+    equipment       TEXT,
+    operator        TEXT,
+    started_at      TIMESTAMP   NOT NULL,
+    processed_at    TIMESTAMP   NOT NULL DEFAULT NOW(),
+    total_tests     INTEGER     NOT NULL,
+    pass_count      INTEGER     NOT NULL,
+    fail_count      INTEGER     NOT NULL,
+    yield_pct       REAL        NOT NULL,
+    outfeed_path    TEXT,
+    source_path     TEXT,
+    summary         JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_report_results_lot_id      ON report_results (lot_id);
+CREATE INDEX IF NOT EXISTS idx_report_results_started_at  ON report_results (started_at DESC);`}
+/>
+
+```bash
+psql -h 12.81.225.154 -U postgres -d postgres -f flows/db_schema.sql
+```
+
+학습 편의를 위해 flow 코드 안에서도 `IF NOT EXISTS` 로 한 번 더 만들어둡니다 — 사내 Postgres 가 없는 환경에서
+SQLite 로 바로 시험할 수 있게 하려는 안전장치입니다.
+
+## Flow 코드 — 핵심만
+
+전체 코드는 `flows/03_report_to_postgres.py` 에 있습니다. 핵심은 다음 다섯 task 입니다.
+
+### 1) read_report — 파일 읽기 (재시도 포함)
+
+<CodeBlock
+  filename="flows/03_report_to_postgres.py"
+  lang="python"
+  code={`@task(retries=2, retry_delay_seconds=1)
+def read_report(path: str) -> dict[str, Any]:
+    logger = get_run_logger()
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"report not found: {p}")
+    logger.info("reading report: %s (%d bytes)", p, p.stat().st_size)
+    with p.open("r", encoding="utf-8") as f:
+        return json.load(f)`}
+/>
+
+`retries=2` — 공유 폴더가 잠깐 바빠 읽기에 실패해도 한 번 더 시도합니다.
+
+### 2) parse_report — pass / fail / yield / 통계
+
+<CodeBlock
+  lang="python"
+  code={`@task
+def parse_report(report: dict[str, Any]) -> dict[str, Any]:
+    tests = report.get("tests", [])
+    total = len(tests)
+
+    pass_count = 0
+    fail_count = 0
+    failed_sites: list[dict[str, Any]] = []
+    by_name: dict[str, list[float]] = {}
+
+    for t in tests:
+        v = float(t["value"]); lo = float(t["spec_low"]); hi = float(t["spec_high"])
+        ok = lo <= v <= hi
+        if ok:
+            pass_count += 1
+        else:
+            fail_count += 1
+            failed_sites.append({
+                "site": t["site"], "name": t["name"], "value": v,
+                "spec_low": lo, "spec_high": hi,
+            })
+        by_name.setdefault(t["name"], []).append(v)
+
+    per_test = {
+        name: {
+            "n": len(values),
+            "mean": round(stats.fmean(values), 6),
+            "stdev": round(stats.pstdev(values), 6) if len(values) > 1 else 0.0,
+            "min": round(min(values), 6),
+            "max": round(max(values), 6),
+        }
+        for name, values in by_name.items()
+    }
+
+    yield_pct = (pass_count / total * 100.0) if total else 0.0
+    return {
+        "lot_id": report["lot_id"],
+        "wafer_id": report["wafer_id"],
+        "equipment": report.get("equipment"),
+        "operator": report.get("operator"),
+        "started_at": datetime.fromisoformat(report["started_at"]),
+        "total_tests": total,
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "yield_pct": round(yield_pct, 3),
+        "summary": {"per_test": per_test, "failed_sites": failed_sites},
+    }`}
+/>
+
+### 3) write_outfeed — outfeed 폴더에 결과 JSON 작성
+
+<CodeBlock
+  lang="python"
+  code={`@task
+def write_outfeed(parsed: dict[str, Any], source_path: str) -> str:
+    OUTFEED_DIR.mkdir(parents=True, exist_ok=True)
+
+    ts = parsed["started_at"].strftime("%Y%m%d_%H%M%S")
+    name = f"{parsed['lot_id']}_{parsed['wafer_id']}_{ts}_result.json"
+    out_path = OUTFEED_DIR / name
+
+    payload = {
+        **{k: parsed[k] for k in (
+            "lot_id", "wafer_id", "equipment", "operator",
+            "total_tests", "pass_count", "fail_count", "yield_pct", "summary",
+        )},
+        "started_at": parsed["started_at"].isoformat(),
+        "processed_at": datetime.utcnow().isoformat(),
+        "source_path": str(source_path),
+    }
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return str(out_path)`}
+/>
+
+이렇게 만들어진 outfeed 파일 한 개는 다음과 같이 생겼습니다 (실제 실행 결과).
+
+<CodeBlock
+  filename="flows/outfeed/A001_W02_20260507_081200_result.json"
+  lang="json"
+  code={`{
+  "lot_id": "A001",
+  "wafer_id": "W02",
+  "equipment": "TESTER-03",
+  "operator": "ENG_KIM",
+  "started_at": "2026-05-07T08:12:00",
+  "processed_at": "2026-05-07T11:24:34.706242",
+  "total_tests": 12,
+  "pass_count": 11,
+  "fail_count": 1,
+  "yield_pct": 91.667,
+  "summary": {
+    "per_test": {
+      "Vth":   {"n": 4, "mean": 0.521,  "stdev": 0.024423, "min": 0.498, "max": 0.561},
+      "Idsat": {"n": 4, "mean": 1.0075, "stdev": 0.027978, "min": 0.961, "max": 1.033},
+      "Ioff":  {"n": 4, "mean": 0.031,  "stdev": 0.008155, "min": 0.022, "max": 0.044}
+    },
+    "failed_sites": [
+      {"site": 3, "name": "Vth", "value": 0.561, "spec_low": 0.45, "spec_high": 0.55}
+    ]
+  },
+  "source_path": ".../sample_reports/LOT_A001_2026-05-07_08-12.json"
+}`}
+/>
+
+<Callout kind="tip" title="왜 outfeed 라는 이름?">
+설비 라인의 outfeed 컨베이어처럼, **flow 가 처리해 다음 단계로 흘려보내는** 결과 파일이라는 의미입니다.
+다른 flow 가 이 outfeed 폴더만 보고 후속 작업(예: 알림, 추가 분석) 을 시작할 수 있도록,
+입력 폴더(infeed) 와 출력 폴더(outfeed) 를 의도적으로 분리합니다.
+</Callout>
+
+### 4) upsert_to_db — Postgres / SQLite 한 행 적재
+
+<CodeBlock
+  lang="python"
+  code={`@task(retries=3, retry_delay_seconds=2)
+def upsert_to_db(parsed, outfeed_path, source_path, db_url) -> int:
+    eng = _engine(db_url)
+    _metadata.create_all(eng, checkfirst=True)   # 학습 안전망
+
+    row = {
+        "lot_id": parsed["lot_id"], "wafer_id": parsed["wafer_id"],
+        "equipment": parsed["equipment"], "operator": parsed["operator"],
+        "started_at": parsed["started_at"], "processed_at": datetime.utcnow(),
+        "total_tests": parsed["total_tests"], "pass_count": parsed["pass_count"],
+        "fail_count": parsed["fail_count"], "yield_pct": parsed["yield_pct"],
+        "outfeed_path": outfeed_path, "source_path": source_path,
+        "summary": parsed["summary"],
+    }
+    with eng.begin() as conn:
+        result = conn.execute(insert(report_results).values(**row))
+        return int(result.inserted_primary_key[0])`}
+/>
+
+DB 연결 문자열은 `db_url` 인자(없으면 `DATABASE_URL` 환경변수, 없으면 SQLite) 로 주입받습니다.
+즉 코드는 한 벌인데:
+
+| 환경 | DATABASE_URL |
+| --- | --- |
+| 사내 운영 | `postgresql+psycopg2://postgres:postgres@12.81.225.154:5432/postgres` |
+| 본인 PC 학습 | `sqlite:///flows/local_test.db` (또는 미설정) |
+
+그대로 동일하게 동작합니다. **`summary` 컬럼은 SQLAlchemy 의 generic JSON 타입을 써서 Postgres 에선 JSONB,
+SQLite 에선 TEXT 에 자동 매핑**됩니다. 이 한 줄 덕에 사내 DB 가 없어도 학습이 멈추지 않습니다.
+
+### 5) query_recent — 같은 lot의 최근 결과 조회
+
+<CodeBlock
+  lang="python"
+  code={`@task
+def query_recent(lot_id: str, db_url: str, limit: int = 5) -> list[dict[str, Any]]:
+    eng = _engine(db_url)
+    stmt = (
+        select(
+            report_results.c.id, report_results.c.lot_id, report_results.c.wafer_id,
+            report_results.c.processed_at, report_results.c.pass_count,
+            report_results.c.fail_count, report_results.c.yield_pct,
+            report_results.c.outfeed_path,
+        )
+        .where(report_results.c.lot_id == lot_id)
+        .order_by(report_results.c.processed_at.desc())
+        .limit(limit)
+    )
+    with eng.connect() as conn:
+        return [dict(r._mapping) for r in conn.execute(stmt)]`}
+/>
+
+같은 lot 의 흐름(예: A001 의 W01 → W02 → W03 …)을 한눈에 볼 수 있습니다.
+실제 운영에서는 이 결과를 Slack/Teams 알림이나 BI 대시보드에 그대로 붙입니다.
+
+## Flow 한 개로 묶기
+
+<CodeBlock
+  lang="python"
+  code={`@flow(name="report-to-postgres", log_prints=True)
+def process_report(report_path: str, db_url: str | None = None) -> dict[str, Any]:
+    db_url = db_url or os.getenv("DATABASE_URL", DEFAULT_DB_URL)
+
+    raw = read_report(report_path)
+    parsed = parse_report(raw)
+    outfeed_path = write_outfeed(parsed, source_path=report_path)
+    row_id = upsert_to_db(parsed, outfeed_path, source_path=report_path, db_url=db_url)
+    recent = query_recent(parsed["lot_id"], db_url=db_url)
+
+    return {
+        "row_id": row_id,
+        "outfeed_path": outfeed_path,
+        "yield_pct": parsed["yield_pct"],
+        "recent_count": len(recent),
+    }`}
+/>
+
+## 실행 — 본인 PC에서 SQLite로 시험하기
+
+`flows/sample_reports/` 에 dummy 보고서 5개가 있습니다.
+
+```bash
+# 한 개만 처리
+python flows/03_report_to_postgres.py \\
+  --report flows/sample_reports/LOT_A001_2026-05-07_08-01.json
+
+# 5개 모두 처리
+python flows/03_report_to_postgres.py --all
+
+# 처리 없이 적재된 결과만 조회
+python flows/03_report_to_postgres.py --query A001
+```
+
+DB 가 없어도 자동으로 `flows/local_test.db` SQLite 가 사용됩니다.
+
+## 실제 결과 (이 자료가 한 번 실행해 본 결과)
+
+5개 dummy 보고서를 처리하면 콘솔 마지막에 이런 표가 나옵니다.
+
+```text
+ id    lot  wafer  pass  fail  yield_pct
+  1   A001    W01    12     0     100.00
+  2   A001    W02    11     1      91.67
+  3   A002    W01    12     0     100.00
+  4   B777    W03     0    12       0.00   ← Vth/Idsat/Ioff 모두 spec out
+  5   C314    W07    12     0     100.00
+```
+
+`B777/W03` 처럼 모든 측정이 spec out 인 경우, summary 의 `failed_sites` 에 12개 항목이 모두 들어가 있어
+DB 한 컬럼으로도 어떤 site 가 어떻게 어긋났는지 추적 가능합니다.
+
+## 사내 Postgres로 옮기는 법
+
+코드 변경은 **0줄** 입니다. 환경변수만 바꿉니다.
+
+```bash
+# Windows PowerShell
+$env:DATABASE_URL = "postgresql+psycopg2://postgres:postgres@12.81.225.154:5432/postgres"
+python flows/03_report_to_postgres.py --all
+
+# bash / zsh
+export DATABASE_URL="postgresql+psycopg2://postgres:postgres@12.81.225.154:5432/postgres"
+python flows/03_report_to_postgres.py --all
+```
+
+확인은 `psql` 또는 사내 DB 클라이언트에서:
+
+```sql
+SELECT id, lot_id, wafer_id, pass_count, fail_count, yield_pct,
+       summary -> 'failed_sites' AS failed_sites
+FROM report_results
+ORDER BY processed_at DESC
+LIMIT 10;
+```
+
+`summary` 가 JSONB 이므로 `->` / `->>` 연산자로 그대로 검색할 수 있습니다.
+
+<Callout kind="check" title="이 예제로 가져갈 것">
+1. **하나의 flow 안에서 외부 자원 3 종류**(파일 입력, 파일 출력, DB) 를 다루는 표준 형태.
+2. **DB URL 을 인자로 주입**해 환경 분리(prod Postgres / 학습 SQLite) 를 1 환경변수로 끝내는 패턴.
+3. `summary` 같은 가변 구조를 **JSON 컬럼 하나**로 처리해 스키마 변경 없이 새 항목을 늘리는 패턴.
+4. `read_report` 와 `upsert_to_db` 에 붙은 `retries` 처럼 **외부 자원을 만지는 task 에만 retry 를 붙이는** 습관 (멱등성과 짝).
+</Callout>
+
+<Quiz
+  id="ex3-q1"
+  question="이 예제의 코드는 사내 Postgres 가 없어도 SQLite 로 그대로 동작합니다. 이게 가능한 이유는?"
+  options={[
+    "Prefect 가 자체 DB 를 갖고 있어서 어떤 DB URL 이든 가로채 처리하기 때문",
+    "psycopg2 가 SQLite 도 함께 지원하기 때문",
+    "코드에서 SQLAlchemy 의 generic 타입(JSON 등)을 쓰고 DB URL 만 외부에서 주입하기 때문",
+    "SQLite 가 Postgres 와 SQL 문법이 100% 같기 때문",
+  ]}
+  correct={2}
+  explanation="SQLAlchemy 가 DB 별 차이(JSONB ↔ TEXT, SERIAL ↔ AUTOINCREMENT 등) 를 추상화해 줍니다. 우리가 한 일은 (1) generic JSON 타입을 쓰고 (2) DB URL 을 환경변수로 외부 주입한 것 두 가지입니다. 같은 패턴으로 MySQL 등 다른 DB 로도 옮길 수 있습니다."
+/>
