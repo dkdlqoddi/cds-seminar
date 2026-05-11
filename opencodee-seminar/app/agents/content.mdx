@@ -1,0 +1,231 @@
+## Primary vs Subagent — 한 장으로
+
+<div className="not-prose my-6 grid gap-4 sm:grid-cols-2">
+  <div className="rounded-xl border border-blue-200 bg-blue-50/30 p-4">
+    <OpencodeModeBadge mode="primary" />
+    <div className="mt-2 text-base font-semibold text-zinc-900">
+      Primary Agent
+    </div>
+    <p className="mt-2 text-sm leading-6 text-zinc-700">
+      사용자가 <strong>직접 대화</strong>하는 에이전트.
+      <KeystrokeBadge>Tab</KeystrokeBadge> 으로 순환 선택.
+      기본 <code>build</code> 외에 본인이 새로 정의 가능.
+    </p>
+    <p className="mt-2 text-xs text-zinc-500">예: build, plan</p>
+  </div>
+  <div className="rounded-xl border border-amber-200 bg-amber-50/30 p-4">
+    <OpencodeModeBadge mode="subagent" />
+    <div className="mt-2 text-base font-semibold text-zinc-900">
+      Subagent
+    </div>
+    <p className="mt-2 text-sm leading-6 text-zinc-700">
+      <strong>primary가 위임</strong>하거나 사용자가
+      <KeystrokeBadge>@</KeystrokeBadge>이름 으로 명시적으로 호출.
+      좁은 권한·전용 프롬프트로 한 가지 일만 잘 한다.
+    </p>
+    <p className="mt-2 text-xs text-zinc-500">예: csv-cleaner, waveform-explainer</p>
+  </div>
+</div>
+
+<Callout kind="tip" title="언제 어느 쪽을 만드나">
+- **여러 단계가 섞인 작업의 진입점**(설계 후 코드 → 테스트) — primary로.
+- **특정 폴더만 / 특정 동작만** 하는 도구 — subagent로.<br/>
+  실수했을 때 피해 범위가 좁아진다는 게 가장 큰 가치입니다.
+</Callout>
+
+## 어디에 저장하나
+
+| 종류 | 위치 (cmd) | 위치 (PowerShell) |
+| --- | --- | --- |
+| 프로젝트 전용 | `.opencode\agents\이름.md` | `.\\.opencode\\agents\\이름.md` |
+| 글로벌 (개인) | `%USERPROFILE%\.config\opencode\agents\이름.md` | `$env:USERPROFILE\.config\opencode\agents\이름.md` |
+
+파일명이 곧 에이전트 이름입니다 — `csv-cleaner.md` 를 만들면 `@csv-cleaner` 로 부릅니다.
+
+## frontmatter 필드
+
+<CodeBlock
+  filename=".opencode\agents\csv-cleaner.md (구조 설명용)"
+  lang="md"
+  code={`---
+description: data/ 폴더의 측정 CSV를 정리한다 (raw 보존, clean 에 저장).
+mode: subagent                       # primary | subagent | all
+model: samsungds/gpt-oss-120b        # (선택) 모델 오버라이드
+temperature: 0.1                     # (선택) 낮을수록 단호함
+permission:
+  edit: ask                          # 기존 파일 수정
+  write: allow                       # 새 파일 생성 (data/clean 에만 한정 시키려면 본문에 명시)
+  bash: deny                         # 쉘 명령 금지
+  webfetch: deny
+---
+
+(여기에 시스템 프롬프트 — 다음 단락 참고)
+`}
+/>
+
+핵심 필드:
+
+- **`description`** *(필수)* — primary가 "언제 이 subagent를 부를지" 판단하는 한 줄. **동작과 입력**을 구체적으로.
+- **`mode`** — `subagent` 가 가장 흔함. `primary`로 두면 <KeystrokeBadge>Tab</KeystrokeBadge> 모드 순환에 들어감.
+- **`model`** — 사내 빌드의 기본 모델로 충분하면 생략.
+- **`temperature`** — 정리·정량 작업은 `0.1` 정도로 낮춤. 자유 설명은 `0.4`.
+- **`permission`** — 4가지 도구에 대해 `allow / ask / deny`.
+
+## 예제 ① · `csv-cleaner` 서브에이전트
+
+목표: `data/raw/` 의 측정 CSV를 정리해 `data/clean/` 에 저장. **raw는 절대 안 만진다.**
+
+<CodeBlock
+  filename=".opencode\agents\csv-cleaner.md"
+  lang="md"
+  code={`---
+description: data/raw/ 의 CSV를 헤더 정리·결측 보간 후 data/clean/ 에 저장한다. raw 는 절대 수정하지 않는다.
+mode: subagent
+temperature: 0.1
+permission:
+  edit: ask
+  write: allow
+  bash: ask
+  webfetch: deny
+---
+
+너는 측정 CSV 정리 전용 어시스턴트다.
+
+규칙:
+1. 입력은 항상 data/raw/*.csv 다. 다른 폴더의 파일을 만지지 않는다.
+2. 출력은 항상 data/clean/<같은이름>.csv 다. raw 파일은 어떤 경우에도 수정·삭제하지 않는다.
+3. 정리 절차: (a) 헤더 표준화 (b) 결측치 선형 보간 (c) 타임스탬프 ISO8601 통일.
+4. 처리 후 채팅창에 "입력 행/열 → 출력 행/열, 결측 보간 N건"을 한 줄로 보고한다.
+`}
+/>
+
+### 권한 매트릭스
+
+<PermissionMatrix
+  title="csv-cleaner — 도구별 정책"
+  rows={[
+    { tool: "edit",     verdict: "ask",   note: "수정은 사람이 한 번 보고 승인" },
+    { tool: "write",    verdict: "allow", note: "data/clean/ 에 새 파일 작성 허용 (본문 규칙으로 폴더 한정)" },
+    { tool: "bash",     verdict: "ask",   note: "필요 시 python 호출 — 사람 확인" },
+    { tool: "webfetch", verdict: "deny",  note: "외부 인터넷 호출 금지" },
+  ]}
+/>
+
+### 호출 모습과 권한 거부
+
+<OpencodeShell
+  mode="build"
+  agent="build"
+  cwd="D:\projects\measurement-cleanup"
+  lines={[
+    { kind: "user", text: "@csv-cleaner data/raw/2026-05-10_run1.csv 정리해줘" },
+    { kind: "system", text: "→ build agent가 @csv-cleaner 에 위임" },
+    { kind: "tool", name: "read (raw csv)", result: "12,345 rows × 7 cols" },
+    { kind: "tool", name: "write (data/clean/2026-05-10_run1.csv) — write: allow", result: "saved 12,340 rows" },
+    { kind: "assistant", text: "입력 12,345 행 → 출력 12,340 행 (결측 보간 5건)." },
+  ]}
+/>
+
+만약 csv-cleaner가 실수로 `bash rm data/raw/...` 를 시도하면:
+
+<OpencodeShell
+  mode="build"
+  agent="build"
+  cwd="D:\projects\measurement-cleanup"
+  lines={[
+    { kind: "tool", name: "bash — ask (사용자 승인 요청)", result: "명령: rm data/raw/2026-05-10_run1.csv  →  [Allow / Deny / Always]" },
+    { kind: "user", text: "(Deny 선택)" },
+    { kind: "assistant", text: "사용자가 거부했습니다. raw 파일은 보존됩니다." },
+  ]}
+  footer="bash: ask 로 둔 덕분에 raw 보존 규칙이 한 번 더 보호됩니다."
+/>
+
+## 예제 ② · `waveform-explainer` 서브에이전트
+
+목표: **수정은 하지 않고 설명만**. 선임이 남긴 분석 스크립트를 줄 단위로 풀어 설명한다.
+
+<CodeBlock
+  filename=".opencode\agents\waveform-explainer.md"
+  lang="md"
+  code={`---
+description: 진동 분석 Python 스크립트를 줄 단위로 설명한다. 코드를 수정하거나 명령을 실행하지 않는다.
+mode: subagent
+temperature: 0.4
+permission:
+  edit: deny
+  write: deny
+  bash: deny
+  webfetch: deny
+---
+
+너는 진동 분석 스크립트 해독 전용 어시스턴트다.
+
+규칙:
+1. 사용자가 가리킨 파일만 읽는다. 다른 파일을 임의로 열지 않는다.
+2. 코드를 수정·실행·생성하지 않는다. 무엇을 해도 결국 "왜 이렇게 짰는지"를 한국어로 설명만 한다.
+3. 핵심 함수 위주로 3~5줄 단위로 묶어 설명하고, FFT / 윈도윙 / 샘플레이트 같은 도메인 용어는 한국어 풀이를 옆에 단다.
+4. 마지막에 "변수 한 곳만 안전하게 바꾸려면" 어디를 만져야 할지 한 줄 가이드를 덧붙인다.
+`}
+/>
+
+<PermissionMatrix
+  title="waveform-explainer — 모든 쓰기/실행 금지"
+  rows={[
+    { tool: "edit",     verdict: "deny", note: "수정 절대 금지 (읽기 전용 Ask 모드)" },
+    { tool: "write",    verdict: "deny", note: "새 파일도 만들지 않음" },
+    { tool: "bash",     verdict: "deny", note: "실행 금지" },
+    { tool: "webfetch", verdict: "deny", note: "외부 호출 금지" },
+  ]}
+/>
+
+이 에이전트는 사고가 날 수 없는 구조라 자리를 비우고 돌려도 안전합니다.
+
+## 검증 — 4가지를 확인하세요
+
+<SelfCheck
+  id="agents"
+  title="Agents 동작 검증"
+  items={[
+    {
+      id: "1",
+      label: "@ 를 입력하면 자동완성에 새 에이전트가 보이고, description이 같이 뜬다.",
+      hint: "안 보이면 파일이 정확히 .opencode/agents/ (또는 글로벌 경로) 에 있는지, .md 확장자인지 확인.",
+    },
+    {
+      id: "2",
+      label: "primary 에이전트로 만든 거라면 Tab 키로 순환할 때 화면 상단에 뜬다.",
+      hint: "subagent 는 Tab 순환에 안 들어옵니다 — 정상입니다.",
+    },
+    {
+      id: "3",
+      label: "차단한 도구(deny)를 시도하면 도구 호출 자체가 거부된다 / ask 면 승인 프롬프트가 뜬다.",
+      hint: "예: bash: deny 인데 쉘을 쓰려고 하면 즉시 차단되어야 합니다.",
+    },
+    {
+      id: "4",
+      label: "model 을 오버라이드했다면 응답 스타일·속도가 실제로 달라진 게 체감된다.",
+      hint: "동일한 질문을 기본 모델 / 오버라이드 모델로 한 번씩 던져 비교해보세요.",
+    },
+  ]}
+/>
+
+## 흔한 실수 3가지
+
+<Callout kind="warn" title="에이전트 만들 때 자주 깨지는 곳">
+1. **<code>mode: subagent</code> 로 만들고 <KeystrokeBadge>Tab</KeystrokeBadge> 으로 안 보인다고 당황한다** — subagent는 Tab 순환에 들어가지 않습니다. <KeystrokeBadge>@</KeystrokeBadge>이름 으로만 부르거나, primary가 description을 보고 자동 위임하게 둡니다.
+2. **<code>description</code> 이 너무 추상적** — "도와주는 어시스턴트" 같은 문구는 primary가 언제 부를지 못 정합니다. <strong>입력 / 출력 / 어디서</strong>를 구체적으로 적으세요.
+3. **<code>permission</code> 을 다 <code>allow</code> 로 풀어둠** — 좁은 권한이 subagent의 핵심 가치입니다. 안 쓰는 도구는 <code>deny</code>, 가끔 쓰는 도구는 <code>ask</code>로 시작하세요.
+</Callout>
+
+<Quiz
+  id="lesson-5-q1"
+  question="csv-cleaner 서브에이전트를 만들었는데, primary(build)에 '@csv-cleaner data/raw/x.csv 정리해줘' 라고 했더니 build가 자기 손으로 처리하고 위임을 안 합니다. 가장 먼저 손볼 곳은?"
+  options={[
+    "permission 을 전부 allow 로 풀어준다",
+    "model 을 더 강한 모델로 바꾼다",
+    "csv-cleaner.md 의 description 을 '어떤 입력을 받아 어떤 출력을 만드는지' 구체적으로 다시 적는다",
+    "AGENTS.md 를 지운다",
+  ]}
+  correct={2}
+  explanation="primary 에이전트는 subagent의 description을 보고 위임 여부를 판단합니다. description이 모호하면 위임이 일어나지 않습니다. 입력·출력·어디서를 구체적으로 적어 주세요."
+/>

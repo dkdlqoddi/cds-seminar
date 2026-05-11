@@ -1,0 +1,116 @@
+## 증상으로 빠르게 찾기
+
+<SymptomMatrix
+  title="가장 자주 보고되는 증상 → 처치"
+  rows={[
+    {
+      symptom: <><code>HTTP 401</code> / <code>403</code> 에러</>,
+      cause: "x-dep-ticket 만료, Send-System-Name 누락, 본인 사번이 게이트웨이에 등록 안 됨.",
+      fix: <>opencode를 끄고 사내 AI 플랫폼에서 ticket을 재발급한 뒤, 환경변수 또는 <code>opencode.json</code> 헤더에 새 값을 반영. 사내 인프라팀에 사번 등록 여부 확인.</>,
+      severity: "high",
+    },
+    {
+      symptom: <><code>HTTP 404</code> on chat completion</>,
+      cause: <>provider의 <code>baseURL</code> 끝에 <code>/chat/completions</code> 까지 적어버려서 경로가 두 번 붙음.</>,
+      fix: <><code>v1</code> 까지만 적습니다. 자세한 예시는 자매 자료 <a href="https://opencode.ai/docs/">Roo Code 가이드</a>의 BaseURL 표 참고.</>,
+      severity: "mid",
+    },
+    {
+      symptom: <><code>'opencode' is not recognized as an internal or external command</code></>,
+      cause: "사내 빌드 배포가 안 됐거나 PATH에 안 들어감.",
+      fix: <>IT/플랫폼팀에 사내 opencode 배포 패키지를 요청. cmd 새 창에서 <code>opencode --version</code> 으로 재확인.</>,
+      severity: "high",
+    },
+    {
+      symptom: <><KeystrokeBadge>/</KeystrokeBadge> 를 눌러도 새로 만든 명령이 자동완성에 안 뜸</>,
+      cause: "(1) opencode를 재시작 안 함 (2) 파일 위치가 .opencode\\commands\\ 가 아님 (3) 확장자가 .md 가 아님.",
+      fix: <>opencode를 <KeystrokeBadge>Ctrl</KeystrokeBadge>+<KeystrokeBadge>C</KeystrokeBadge> 로 종료 후 같은 폴더에서 다시 실행. 그래도 안 뜨면 경로·확장자 점검.</>,
+      severity: "mid",
+    },
+    {
+      symptom: <><KeystrokeBadge>@</KeystrokeBadge>이름 으로 에이전트가 안 불림</>,
+      cause: "agent 파일이 .opencode\\agents\\ 가 아닌 다른 곳에 있음, 또는 frontmatter --- 가 안 닫혀서 파싱 실패.",
+      fix: <>경로와 frontmatter 양쪽 <code>---</code> 라인 확인. 그래도 안 보이면 opencode 재시작.</>,
+      severity: "mid",
+    },
+    {
+      symptom: "응답에 도구 호출(▸ tool ·) 자체가 안 일어남, LLM이 추측만 함.",
+      cause: "Plan 모드에 잠겨 있음(파일을 안 만지는 게 정상), 또는 permission 이 너무 빡빡해서 차단됨.",
+      fix: <><KeystrokeBadge>Tab</KeystrokeBadge> 으로 Build 모드로 돌리고, <code>opencode.json</code> 의 permission 을 <code>ask</code> 이상으로 풀기.</>,
+      severity: "mid",
+    },
+    {
+      symptom: "갑자기 응답이 끊기거나 같은 내용을 반복.",
+      cause: "컨텍스트 길이 초과 — 대화가 너무 길어졌거나 파일을 너무 많이 읽음.",
+      fix: <>새 세션을 시작 (현재 세션을 종료하고 다시 <code>opencode</code>). 필요하면 <code>/share</code> 로 직전 세션을 저장.</>,
+      severity: "low",
+    },
+    {
+      symptom: <>에이전트가 <code>data/raw/</code> 같은 보호 폴더를 만지려고 한다</>,
+      cause: <>AGENTS.md 에 금지 규칙이 명시 안 됨, 또는 에이전트 frontmatter 의 <code>permission</code> 이 너무 열려 있음.</>,
+      fix: <>AGENTS.md 에 "raw 는 절대 수정 금지" 한 줄을 추가하고, 해당 에이전트의 <code>edit</code> / <code>bash</code> 를 <code>ask</code> 또는 <code>deny</code> 로 좁힘.</>,
+      severity: "high",
+    },
+  ]}
+/>
+
+## 본인 환경이 "최소 정상 상태"인지 5문 자가진단
+
+다음 5가지가 모두 체크되면 더 깊은 사용으로 넘어가도 됩니다.
+
+<SelfCheck
+  id="pitfalls"
+  title="최소 정상 상태 체크리스트"
+  items={[
+    {
+      id: "1",
+      label: "cmd 혹은 PowerShell에서 opencode --version 이 버전 번호를 출력한다.",
+      hint: "안 되면 사내 빌드 배포부터. 본 자료의 시작 가정입니다.",
+    },
+    {
+      id: "2",
+      label: "작업 폴더에서 opencode를 띄우면 게이트웨이 연결 메시지가 뜨고, 첫 스모크 테스트(파일 목록 요약)가 도구 호출과 함께 성공한다.",
+      hint: "401/403 이 뜨면 인증 문제, 404 면 BaseURL 문제. 위 매트릭스 참고.",
+    },
+    {
+      id: "3",
+      label: "AGENTS.md 에 'raw 는 절대 수정 금지' 류 한 줄 규칙이 들어있고, 새 세션에서 이 규칙이 살아있다.",
+      hint: "테스트: 'data/raw/X.csv 를 삭제해줘' 라고 시켜보면, 에이전트가 정중히 거절해야 합니다.",
+    },
+    {
+      id: "4",
+      label: ".opencode/commands/ 아래 최소 1개 이상의 명령을 만들었고, / 자동완성에서 보인다.",
+      hint: "예: /summarize-csv. 자동완성에 안 뜨면 4강의 검증 5단계로.",
+    },
+    {
+      id: "5",
+      label: ".opencode/agents/ 아래 최소 1개의 서브에이전트가 있고, @이름 으로 호출하면 권한 정책대로 동작한다.",
+      hint: "예: @csv-cleaner. deny 한 도구를 일부러 시도시켜 차단되는지 확인하면 안전.",
+    },
+  ]}
+/>
+
+## "정상 화면"이 어떤지 한 번 더
+
+아래는 모든 게 잘 굴러갈 때 한 세션이 어떻게 흘러가는지를 보여주는 골든 패턴입니다.
+
+<OpencodeShell
+  mode="build"
+  agent="build"
+  cwd="D:\projects\measurement-cleanup"
+  lines={[
+    { kind: "system", text: "opencode v0.x · 사내 빌드 · 게이트웨이 연결됨" },
+    { kind: "user", text: "/summarize-csv data\\raw\\2026-05-10_run1.csv" },
+    { kind: "tool", name: "read (raw csv)", result: "12,345 rows × 7 cols" },
+    { kind: "tool", name: "bash (python summarize.py)", result: "stats computed" },
+    { kind: "assistant", text: "통계 표 + 한국어 요약 (ch1·ch4 이상치 의심)" },
+    { kind: "user", text: "@csv-cleaner data/raw/2026-05-10_run1.csv 도 정리해줘" },
+    { kind: "tool", name: "write (data/clean/...) — write: allow", result: "saved" },
+    { kind: "assistant", text: "입력 12,345 → 출력 12,340 행, 결측 보간 5건." },
+  ]}
+  footer="도구 호출이 명확하게 표시되고, 보호 폴더(raw)는 직접 수정되지 않습니다."
+/>
+
+<Callout kind="info" title="여기까지 왔다면">
+모든 핵심을 다 익혔습니다. 마지막 강의는 자주 등장하는 용어를 한 줄씩 정리한 짧은 참고용입니다.
+</Callout>

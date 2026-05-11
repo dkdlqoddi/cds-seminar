@@ -1,0 +1,28 @@
+## 한 줄 용어집
+
+| 용어 | 한 줄 풀이 |
+| --- | --- |
+| **TUI** | Text User Interface — 마우스 없이 터미널 안에서 키보드로 다루는 화면. opencode가 띄우는 그 화면. |
+| **Primary agent** | 사용자가 직접 대화하는 에이전트. `Tab` 키로 순환 선택. 기본값은 `build`. |
+| **Subagent** | primary 가 위임하거나 사용자가 `@이름` 으로 호출하는 좁은 권한·전용 에이전트. ([5강](/agents)) |
+| **Plan mode** | 읽기 전용 모드. 파일을 만지지 않고 계획만 세움. `Tab` 으로 build 와 토글. |
+| **Build mode** | 실제로 파일을 수정·실행하는 기본 모드. |
+| **Command (Custom Command)** | `/이름` 으로 부르는 재사용 가능한 프롬프트 템플릿. ([4강](/commands)) |
+| **AGENTS.md** | 작업 폴더의 규칙 문서. 매 세션 시작 시 LLM의 시스템 프롬프트에 합쳐짐. ([3강](/project-setup)) |
+| **opencode.json** | 프로젝트별 설정 파일. provider, model, permission 등을 정의. |
+| **Frontmatter** | 마크다운 맨 위 `---` ~ `---` 사이의 YAML 메타 영역. command/agent 파일에 필수. |
+| **`$1` / `$ARGUMENTS`** | command 본문에서 호출 시 받은 인자를 끼워 넣는 자리. |
+| **Provider** | opencode가 LLM에 접근하는 통로 정의. 사내 GPT-OSS 게이트웨이도 하나의 provider. |
+| **Model** | 실제 LLM 모델 이름. 예: `samsungds/gpt-oss-120b`. |
+| **Permission (`allow / ask / deny`)** | 도구별 자동 승인 정책. ask 는 호출마다 사람에게 물음. |
+| **Tool / Tool call** | LLM 이 호출하는 외부 동작 (파일 읽기, 쉘 실행, 파일 쓰기 등). 화면에 `▸ tool ·` 로 표시. |
+| **MCP (Model Context Protocol)** | opencode 가 외부 데이터/도구 서버에 표준 방식으로 접근하는 규격. 본 자료의 다음 시즌 주제. |
+| **x-dep-ticket** | 사내 GPT-OSS 게이트웨이의 인증 헤더. 사번 기반으로 발급. 외부 노출 금지. |
+| **Context window** | LLM이 한 번에 기억하는 텍스트 길이. 너무 길어지면 답이 끊기거나 반복됨 — 새 세션으로. |
+
+## 다음에 알아두면 좋은 자료
+
+- 자매 자료: [AI 에이전트 + Roo Code 입문](https://opencode.ai/docs/) — 사내 게이트웨이 헤더 구성, BaseURL 함정, ticket 정책 등 본 자료가 가정하고 넘어간 디테일을 다룸.
+- 자매 자료: n8n 워크플로 입문 — 같은 LLM을 GUI 워크플로 자동화에 붙이는 또 다른 길.
+
+본 자료의 [흔한 실수](/pitfalls) 페이지는 학습 후에도 책갈피해 두기를 권합니다.

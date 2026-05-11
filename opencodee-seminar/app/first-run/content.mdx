@@ -1,0 +1,115 @@
+## 작업 폴더로 들어가서 한 줄
+
+cmd와 PowerShell 둘 다 동일하게 `opencode` 한 줄이면 끝납니다.
+중요한 것은 **작업 폴더에서 실행해야 한다**는 것 — opencode는 *현재 디렉터리*만 자기 작업 공간으로 봅니다.
+
+<ShellTabs blocks={[
+  {
+    variant: "cmd",
+    content: <CodeBlock lang="bash" code={`REM 1) 작업 폴더로 이동
+cd /d D:\\projects\\measurement-cleanup
+
+REM 2) opencode 실행
+opencode`} />,
+  },
+  {
+    variant: "powershell",
+    content: <CodeBlock lang="bash" code={`# 1) 작업 폴더로 이동
+Set-Location 'D:\\projects\\measurement-cleanup'
+
+# 2) opencode 실행
+opencode`} />,
+  },
+]} />
+
+<Callout kind="warn" title="흔한 실수 — 홈 디렉터리에서 실행">
+<code>C:\Users\내사번</code> 에서 그냥 <code>opencode</code> 를 쳐버리면, opencode가 홈 폴더 전체를 작업 공간으로 인식합니다. <strong>회사 비밀 자료가 통째로 컨텍스트에 들어갈 수 있다는 뜻</strong>이므로, 항상 좁은 작업 폴더로 먼저 들어가 주세요.
+</Callout>
+
+## 실행되면 이런 화면이 뜹니다
+
+다음은 처음 떴을 때 기대하는 화면입니다 (구성 요소에 이름을 붙여둡니다).
+
+<OpencodeShell
+  mode="build"
+  agent="build"
+  cwd="D:\projects\measurement-cleanup"
+  lines={[
+    { kind: "system", text: "opencode v0.x · 사내 빌드 · 게이트웨이 연결됨" },
+    { kind: "system", text: "Tab: 모드 전환 · /: 명령 · @: 에이전트 · Ctrl+C: 종료" },
+    { kind: "prompt", text: "" },
+  ]}
+  footer="↑ 상단: 모드/에이전트 뱃지 · 가운데: 대화 영역 · 아래: 입력창"
+/>
+
+핵심 4가지 영역:
+
+1. **상단 바** — 좌측은 창 컨트롤(장식), 우측에 현재 **모드**(plan/build)와 **에이전트**(@build 등) 뱃지.
+2. **상태 줄** — 현재 `cwd`(작업 폴더). 여기가 잘못되어 있으면 잘못된 파일을 만집니다.
+3. **대화 영역** — 사람 입력(`>`)과 어시스턴트 응답(`●`), 그리고 도구 호출(`▸ tool ·`)이 줄줄이 쌓입니다.
+4. **입력창** — 메시지·`/`명령·`@`에이전트 호출 모두 여기에서 시작.
+
+## 꼭 외워둘 단축키 5개
+
+<div className="not-prose my-6 rounded-xl border border-zinc-200 bg-white p-4">
+  <KeystrokeRow keys={["Tab"]} description="Plan ↔ Build 모드 전환. plan에서는 파일을 수정하지 않음." />
+  <KeystrokeRow keys={["/"]} description="슬래시 명령 시작. 자동완성이 떠야 정상." />
+  <KeystrokeRow keys={["@"]} description="에이전트 호출. 입력하면 등록된 서브에이전트 목록이 뜸." />
+  <KeystrokeRow keys={["Esc"]} description="진행 중인 답변/도구 호출을 취소." />
+  <KeystrokeRow keys={["Ctrl", "C"]} description="opencode 자체 종료." />
+</div>
+
+## 첫 스모크 테스트
+
+다음 한 줄로 **연결 + 도구 호출**이 모두 살아 있는지 확인합니다.
+
+<OpencodeShell
+  mode="build"
+  agent="build"
+  cwd="D:\projects\measurement-cleanup"
+  lines={[
+    { kind: "user", text: "현재 폴더의 파일을 한국어로 짧게 요약해줘." },
+    {
+      kind: "tool",
+      name: "list (현재 폴더 나열)",
+      result: "data/  scripts/  AGENTS.md  opencode.json  README.md",
+    },
+    {
+      kind: "assistant",
+      text:
+        "현재 폴더에는 측정 데이터(`data/`), 분석 스크립트(`scripts/`), 에이전트 규칙(`AGENTS.md`), opencode 설정(`opencode.json`), README가 있습니다. 가장 최근 수정된 파일은 `data/2026-05-10_run1.csv` 입니다.",
+    },
+  ]}
+/>
+
+<Callout kind="check" title="이 화면이 떠야 정상입니다">
+- 도구 호출 (<code>▸ tool · list</code>) 줄이 한 번 이상 떴다 — 파일 접근이 살아있다.
+- 응답이 **현재 폴더의 실제 파일명**을 언급한다 — LLM이 환각으로 짜낸 게 아니다.
+- 한국어로 답이 온다 — 시스템 프롬프트가 일관성 있게 적용되고 있다.
+</Callout>
+
+## "잘못 가고 있는" 화면
+
+<Callout kind="warn" title="이런 화면이면 점검 필요">
+- 도구 호출 없이 LLM이 **추측만** 한다 → 작업 폴더 권한 문제, 혹은 build 모드가 아닌 plan 모드로 잠겨 있음.
+- <code>HTTP 401 / 403</code> 류 에러가 뜬다 → 자격증명(헤더, ticket) 문제. 6강 매트릭스 참고.
+- <code>HTTP 404</code> → provider Base URL이 잘못 설정됨. 자세한 건 자매 자료 [Roo Code 게이트웨이 설정](https://opencode.ai/docs/) 와 같은 원리 (끝의 <code>/v1</code> 까지만).
+- opencode 자체가 안 떠 <code>'opencode' is not recognized</code> → 사내 빌드 배포가 누락. IT/플랫폼팀에 문의.
+</Callout>
+
+## 다음 단계
+
+여기까지 왔으면 "그릇"이 준비된 셈입니다. 다음 강의에서는 **작업 폴더 안에 어떤 파일을 둬야 opencode가 잘 일하는지** 를 정리합니다.
+
+<Quiz
+  id="lesson-2-q1"
+  question="cmd에서 opencode를 D:\\projects\\measurement-cleanup 폴더 기준으로 실행하려면 가장 안전한 순서는?"
+  options={[
+    "어디서든 opencode 만 입력하면 알아서 인식한다",
+    "C:\\Users\\내사번 에서 opencode 를 실행한 뒤 채팅창에서 폴더를 알려준다",
+    "cd /d D:\\projects\\measurement-cleanup 으로 이동한 뒤 opencode 를 실행한다",
+    "opencode D:\\projects\\measurement-cleanup 처럼 인자로 폴더를 넘긴다",
+  ]}
+  correct={2}
+  explanation="opencode는 실행 시점의 cwd(현재 디렉터리)를 작업 공간으로 잡습니다. 홈에서 실행하면 홈 전체가 컨텍스트에 들어가 보안상 위험합니다. 항상 좁은 작업 폴더로 이동한 뒤 실행하세요."
+/>

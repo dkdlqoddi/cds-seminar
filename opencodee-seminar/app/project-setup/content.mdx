@@ -1,0 +1,152 @@
+## 권장 폴더 구조
+
+HW 분석 워크플로에 가장 자주 맞는 모양은 다음과 같습니다.
+
+<FileTree
+  label="D:\projects\measurement-cleanup"
+  tree={[
+    { name: "AGENTS.md", kind: "file", note: "← opencode가 매 세션 가장 먼저 읽는 규칙" },
+    { name: "opencode.json", kind: "file", note: "← 프로젝트별 설정 (필요 시)" },
+    {
+      name: ".opencode",
+      kind: "dir",
+      children: [
+        {
+          name: "commands",
+          kind: "dir",
+          children: [
+            { name: "summarize-csv.md", kind: "file", note: "프로젝트 전용 /명령" },
+            { name: "regen-report.md", kind: "file" },
+          ],
+        },
+        {
+          name: "agents",
+          kind: "dir",
+          children: [
+            { name: "csv-cleaner.md", kind: "file", note: "전용 서브에이전트" },
+            { name: "waveform-explainer.md", kind: "file" },
+          ],
+        },
+      ],
+    },
+    {
+      name: "data",
+      kind: "dir",
+      children: [
+        { name: "raw", kind: "dir", children: [{ name: "...csv", kind: "file", note: "절대 수정 금지" }] },
+        { name: "clean", kind: "dir", children: [{ name: "...csv", kind: "file", note: "정리 결과" }] },
+      ],
+    },
+    {
+      name: "scripts",
+      kind: "dir",
+      children: [{ name: "summarize.py", kind: "file" }],
+    },
+    { name: "README.md", kind: "file" },
+  ]}
+/>
+
+세 가지 원칙만 기억하세요:
+
+1. **작업 단위로 폴더를 나눈다** — 한 폴더가 한 작업. 비밀 자료가 같이 들어가지 않도록.
+2. **`raw/`는 손대지 않는다** — 원본은 읽기 전용 취급. AGENTS.md에 명시.
+3. **`.opencode/`는 git에 같이 커밋한다** — 팀원 모두 같은 명령·에이전트를 공유하게.
+
+## AGENTS.md — 매 세션의 첫 페이지
+
+opencode는 세션을 시작할 때 작업 폴더의 `AGENTS.md`를 시스템 프롬프트에 합칩니다.
+즉 **여기에 쓰는 모든 문장이 LLM에게 영구적으로 기억되는 규칙**이 됩니다.
+
+<CodeBlock
+  filename="AGENTS.md (HW 측정 정리 프로젝트 예시)"
+  lang="md"
+  code={`# 이 프로젝트의 규칙
+
+## 우리는 누구이며 무엇을 하는가
+- 진동 측정 CSV(샘플레이트 25.6 kHz, 6채널)를 정리해 주차 보고서를 만든다.
+
+## 절대 금기
+- \`data/raw/\` 는 **읽기 전용**. 어떤 경우에도 파일을 수정·삭제하지 않는다.
+- \`pip install\` / \`npm install\` 처럼 새 패키지를 설치하지 않는다 — 환경은 IT가 관리.
+- 외부 인터넷 접속이 필요한 도구를 호출하지 않는다.
+
+## 규약
+- 코드는 Python 3.11, pandas + numpy 만 사용한다.
+- 결과 CSV는 \`data/clean/\` 아래 \`YYYY-MM-DD_run<n>.csv\` 형식으로 저장.
+- 한국어로 답한다. 단위는 항상 명시한다 (예: 3.2 mm/s²).
+`}
+/>
+
+<Callout kind="tip" title="짧고 단호하게 쓰세요">
+긴 안내문보다 <strong>"무엇을 절대 하지 마라"</strong> 한 줄이 더 잘 먹습니다. 실수가 한 번 일어났다면, 그 줄을 AGENTS.md에 박아두면 다음 세션부터 같은 사고가 안 납니다.
+</Callout>
+
+## opencode.json — 거의 비워둬도 됩니다
+
+사내 커스텀 빌드는 **provider · 모델 · 인증 헤더가 기본으로 박혀** 있을 가능성이 높습니다.
+그래서 우리가 만지는 `opencode.json`은 대부분 다음 정도면 충분합니다.
+
+<CodeBlock
+  filename="opencode.json (최소 형태)"
+  lang="jsonc"
+  code={`{
+  "$schema": "https://opencode.ai/config.json",
+
+  // 이 프로젝트에서 기본으로 쓸 모델 (사내 빌드의 기본 provider 기준)
+  "model": "samsungds/gpt-oss-120b",
+
+  // 자동 승인 정책 — 위험한 도구는 항상 사람에게 물어보게
+  "permission": {
+    "edit": "ask",
+    "write": "ask",
+    "bash": "ask",
+    "webfetch": "deny"
+  }
+}
+`}
+/>
+
+<Callout kind="info" title="언제 더 만지나">
+다음 경우엔 <code>opencode.json</code>에 <code>provider</code> 블록을 직접 추가해야 합니다:
+<ul>
+<li>사내 빌드가 기본 provider를 안 박아뒀거나, 본인 부서가 다른 게이트웨이 인스턴스를 쓸 때 → 자매 자료 <a href="https://opencode.ai/docs/">Roo Code 게이트웨이 설정</a>과 동일한 BaseURL/헤더 규칙을 따라 적습니다.</li>
+<li>같은 작업 폴더에서 <strong>여러 모델을 골라 쓰고</strong> 싶을 때.</li>
+</ul>
+</Callout>
+
+## 권한 모델 한눈에
+
+`permission`은 4가지 도구 카테고리에 대해 `allow / ask / deny` 셋 중 하나로 답합니다.
+
+<PermissionMatrix
+  title="권장 기본값 (보수적으로 시작)"
+  rows={[
+    { tool: "edit", verdict: "ask", note: "이미 있는 파일을 수정 — 사람이 한 번 봐주는 게 안전" },
+    { tool: "write", verdict: "ask", note: "새 파일 생성 — 의도치 않은 파일 생성 방지" },
+    { tool: "bash", verdict: "ask", note: "쉘 명령 실행 — 가장 위험. 항상 사람이 본다" },
+    { tool: "webfetch", verdict: "deny", note: "외부 인터넷 호출 — 사내 정책상 차단" },
+  ]}
+/>
+
+처음엔 모두 `ask`로 둔 채 시작해, 신뢰가 쌓이는 동작만 골라 `allow`로 풀어주는 패턴을 추천합니다.
+
+## 흔한 함정 3가지
+
+<Callout kind="warn" title="셋업 단계에서 자주 깨지는 곳">
+1. **AGENTS.md를 만들고 opencode를 다시 안 띄움** — opencode는 세션 시작 시점에만 AGENTS.md를 로드합니다. 새 규칙은 <KeystrokeBadge>Ctrl</KeystrokeBadge>+<KeystrokeBadge>C</KeystrokeBadge> 로 끄고 다시 실행해야 적용됩니다.
+2. **opencode.json을 `.opencode/` 안에 둠** — opencode.json은 <strong>프로젝트 루트</strong>에 있어야 합니다. <code>.opencode/</code>는 commands·agents 전용.
+3. **JSON 주석을 그냥 <code>.json</code>에 씀** — 위 예시처럼 주석을 쓰려면 파일명을 <code>opencode.jsonc</code>로 하거나 주석을 지워야 합니다.
+</Callout>
+
+<Quiz
+  id="lesson-3-q1"
+  question="opencode를 띄우는 동안 AGENTS.md를 한 줄 고쳤습니다. 새 규칙을 LLM이 인식하게 하려면?"
+  options={[
+    "그대로 두면 다음 메시지부터 자동으로 반영된다",
+    "/reload 같은 명령으로 즉시 갱신할 수 있다",
+    "opencode를 한 번 종료하고 다시 실행해야 새 AGENTS.md가 시스템 프롬프트에 합쳐진다",
+    "AGENTS.md는 LLM이 보지 못한다",
+  ]}
+  correct={2}
+  explanation="AGENTS.md는 세션 시작 시점에 시스템 프롬프트로 한 번 합쳐집니다. 도중에 수정해도 현재 세션에는 반영되지 않으므로 재실행이 필요합니다."
+/>
