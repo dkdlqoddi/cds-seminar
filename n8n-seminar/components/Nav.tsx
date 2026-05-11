@@ -27,7 +27,7 @@ export function Nav() {
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
         <Link href="/" className="text-sm font-bold tracking-tight text-zinc-900">
           n8n 자동화 입문 <span className="text-zinc-400">·</span>{" "}
-          <span className="text-rose-600">하드웨어 엔지니어용</span>
+          <span className="text-rose-600">삼성용</span>
         </Link>
         <nav className="hidden gap-1 md:flex">
           {items.map((it) => (
