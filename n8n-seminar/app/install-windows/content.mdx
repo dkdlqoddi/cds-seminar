@@ -16,6 +16,27 @@
 - cmd 또는 powershell에서 npm 확인 (where npm 또는 npm -v)
 </Callout>
 
+## 두 갈래 길: 네이티브 Windows vs WSL2
+
+n8n은 Node.js 기반이라 두 환경 모두에서 동일하게 동작합니다. 다만 일상적으로
+쓸 때의 체감 차이가 큽니다.
+
+| 항목 | 네이티브 Windows | WSL2 (Ubuntu) |
+| --- | --- | --- |
+| 설치 난이도 | 낮음 — Node.js exe 한 번 | 중간 — WSL 설치 + 배포판 + Node |
+| Node.js/npm 속도 | 보통 (백신·Defender 검사 영향) | 빠름 — Linux 파일시스템 |
+| 파일 경로 | `%USERPROFILE%\.n8n\` | `~/.n8n` (Linux 홈) |
+| 로컬 파일 노드 | `C:\` 경로 그대로 | `/mnt/c/` 를 거쳐 접근 |
+| 브라우저로 `localhost:5678` | 됨 | 됨 (WSL2가 자동 포워딩) |
+| Windows 작업 스케줄러 | 직접 등록 가능 | WSL 측 systemd / `wsl --exec` 필요 |
+| 사내 정책 | 대부분 즉시 허용 | Hyper-V/가상화 활성 필요 (보안팀 사전 문의) |
+
+<Callout kind="tip" title="언제 어느 쪽을 고를까">
+- **측정 폴더가 `C:\` 또는 사내 공유 폴더에 있다** → 네이티브 Windows가 단순합니다.
+- **Python/uv·Docker·Linux 툴체인을 같이 쓴다, 또는 매크로 무거운 Node 빌드가 답답하다** → WSL2가 쾌적합니다.
+- **둘 다 깔아도 무방**합니다. 데이터 폴더가 분리되니 워크플로우는 JSON export로 옮깁니다.
+</Callout>
+
 ## 1분 시작: `npx n8n`
 
 가장 빠른 방법입니다. 영구 설치 없이 즉석에서 돌립니다.
@@ -49,6 +70,121 @@ PC 부팅과 함께 백그라운드에서 돌리려면 Windows 작업 스케줄�
 [`pm2-windows-service`](https://www.npmjs.com/package/pm2-windows-service)를 씁니다.
 세미나에서는 `npx n8n` 만 충분히 다룹니다.
 
+## WSL2로 설치하기 (대안 경로)
+
+리눅스 환경이 더 익숙하거나 Node 빌드 속도가 답답하다면 WSL2 위에서 돌리는 편이
+훨씬 깔끔합니다. n8n 데이터는 WSL2 안의 `~/.n8n` 으로 들어갑니다.
+
+### 0. WSL2가 켜질 수 있는 PC인지 확인
+
+<FileTree
+  label="WSL2 사용 조건"
+  tree={[
+    { kind: "file", name: "Windows 10 2004 빌드 이상 또는 Windows 11", note: "winver 로 확인" },
+    { kind: "file", name: "BIOS 가상화(VT-x / SVM)", note: "작업관리자 > 성능 > CPU > '가상화: 사용'" },
+    { kind: "file", name: "관리자 권한 PowerShell", note: "wsl 명령은 관리자 셸에서 첫 설치" },
+    { kind: "file", name: "사내 보안 정책 확인", note: "DS 일부 환경은 가상화 정책 사전 협의 필요" },
+  ]}
+/>
+
+<Callout kind="warn" title="사내 PC라면 한 번 더 확인">
+부서에 따라 Hyper-V / 가상화 기능이 정책으로 차단되어 있을 수 있습니다.
+`systeminfo | findstr /i "Hyper"` 로 확인하고, 막혀 있다면 네이티브 경로(`npx n8n`)로 가세요.
+강제로 푸는 것은 보안 위반입니다.
+</Callout>
+
+### 1. WSL2 + Ubuntu 설치
+
+관리자 권한 **PowerShell** 에서:
+
+```powershell
+# 기본 Ubuntu 배포판이 함께 설치됩니다 (재부팅 필요할 수 있음)
+wsl --install
+
+# 이미 wsl이 깔려 있다면 버전만 확인
+wsl --status
+wsl --set-default-version 2
+```
+
+재부팅 후 시작 메뉴에서 **Ubuntu** 를 한 번 실행하면 사용자명·비밀번호를 묻습니다.
+여기서 만든 계정이 WSL2 안의 리눅스 사용자입니다.
+
+### 2. WSL2 안에서 Node.js 20 LTS 설치
+
+Ubuntu가 기본으로 주는 Node.js는 구버전이라 **nvm**으로 20 LTS를 깝니다.
+
+```bash
+# WSL2(Ubuntu) 터미널에서
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+exec $SHELL
+
+nvm install 20
+nvm alias default 20
+node -v   # v20.x 확인
+```
+
+<Callout kind="check" title="사내망에서 npm registry를 사내 미러로">
+사내망에서는 공용 npm registry가 막혀 있을 수 있습니다. WSL2 쉘 안에서 한 번만:
+
+```bash
+npm config set registry https://repo.samsungds.net/artifactory/api/npm/npm-remote/
+npm config get registry
+```
+
+프록시가 필요한 환경이라면 `~/.npmrc` 에 `proxy`, `https-proxy` 를 추가합니다.
+</Callout>
+
+### 3. n8n 실행
+
+```bash
+# 1분 시작: 영구 설치 없이
+npx n8n
+
+# 또는 영구 설치
+npm install -g n8n
+GENERIC_TIMEZONE=Asia/Seoul N8N_DIAGNOSTICS_ENABLED=false n8n
+```
+
+브라우저는 **Windows 쪽** Edge/Chrome에서 그대로 `http://localhost:5678` 로 들어갑니다.
+WSL2가 자동으로 포트를 호스트와 연결합니다.
+
+### 4. 파일 경로: Windows ↔ WSL2 왔다 갔다
+
+n8n 워크플로우가 측정 CSV 폴더를 읽어야 할 때 경로 표기가 다릅니다.
+
+<FileTree
+  label="동일한 폴더를 가리키는 두 표기"
+  tree={[
+    { kind: "dir", name: "Windows에서", children: [
+      { kind: "file", name: "C:\\Users\\jaeyul\\measurements\\", note: "탐색기에 보이는 경로" },
+    ]},
+    { kind: "dir", name: "WSL2 안의 n8n에서", children: [
+      { kind: "file", name: "/mnt/c/Users/jaeyul/measurements/", note: "Read/Write Binary 노드에 이 경로를 적음" },
+    ]},
+    { kind: "dir", name: "반대로 .n8n 데이터를 Windows에서 열고 싶다면", children: [
+      { kind: "file", name: "\\\\wsl$\\Ubuntu\\home\\<user>\\.n8n\\", note: "탐색기 주소창에 그대로 입력" },
+    ]},
+  ]}
+/>
+
+<Callout kind="tip" title="성능 팁: 데이터는 WSL2 쪽에 두기">
+WSL2가 `/mnt/c/...` 같은 Windows 파일을 읽을 때는 상당히 느려질 수 있습니다.
+대량 CSV를 빠르게 처리해야 한다면 측정 데이터를 `~/work/measurements/` 처럼
+**WSL2 홈 디렉터리 안**으로 옮기세요 (네이티브 ext4 → 수 배 빠름).
+</Callout>
+
+### 5. 자동 실행 (선택)
+
+PC를 켜자마자 n8n을 띄우고 싶다면:
+
+```powershell
+# Windows 작업 스케줄러에 등록 — 작업 동작에 다음 입력
+wsl -d Ubuntu -- bash -lc "GENERIC_TIMEZONE=Asia/Seoul n8n"
+```
+
+또는 WSL2 안에서 systemd를 켠 뒤 (`/etc/wsl.conf` 의 `[boot] systemd=true`) `pm2` 로 등록합니다.
+세미나 범위는 아닙니다 — 평소엔 Ubuntu 터미널에서 `n8n` 한 줄로 충분합니다.
+
 ## 데이터 폴더의 의미
 
 n8n이 만든 워크플로우, 자격증명(Credential), 실행 기록은 모두 한 곳에 모입니다.
@@ -70,6 +206,15 @@ n8n이 만든 워크플로우, 자격증명(Credential), 실행 기록은 모두
 PC를 옮기거나 동료에게 워크플로우를 넘길 때, **`.n8n` 폴더 통째로** 복사하면 그대로 동작합니다.
 다만 자격증명 암호화 키가 들어 있으니 **버전관리(git)에는 절대 올리지 마세요.** 워크플로우 자체만
 공유하려면 UI에서 JSON으로 export 합니다 (예제 1~5에 모두 포함됨).
+</Callout>
+
+<Callout kind="info" title="WSL2를 쓰는 경우의 경로">
+같은 폴더가 다른 이름으로 보일 뿐입니다.
+- WSL2 셸에서: `~/.n8n/` (= `/home/<user>/.n8n/`)
+- Windows 탐색기에서: `\\wsl$\Ubuntu\home\<user>\.n8n\`
+
+네이티브 Windows 설치와 WSL2 설치는 **데이터 폴더가 분리**되어 있다는 점에 주의하세요.
+한쪽에서 만든 워크플로우는 JSON export → 다른 쪽 import 로 옮깁니다.
 </Callout>
 
 ## n8n 실행
@@ -218,6 +363,10 @@ HTTP Request 노드의 **Authentication** 영역에서 방금 만든 `사내 GPT
 | `ECONNREFUSED` | 게이트웨이 URL의 호스트명/포트 오타. 브라우저로 그대로 GET 해서 reachable 여부 확인 |
 | 응답이 오긴 하는데 한국어가 깨짐 | 거의 없으나, `Content-Type: application/json; charset=utf-8` 명시 |
 | 워크플로우는 도는데 결과가 갱신 안 됨 | 좌상단 **Save** 안 눌렀거나, 데이터 핀(pin)이 옛날 값에 박혀 있음 |
+| `wsl --install` 이 `0x80370102` 로 실패 | BIOS 가상화(VT-x/SVM) 꺼져 있음. 부팅 시 BIOS에서 활성화 |
+| WSL2에서 `localhost:5678` 이 Windows 브라우저에서 안 열림 | `wsl --shutdown` 후 재실행. 또는 보안 SW가 9P 프로토콜을 차단하는지 확인 |
+| WSL2에서 CSV 처리가 너무 느림 | 측정 폴더를 `/mnt/c/...` 가 아닌 WSL2 홈(`~/`)으로 옮기면 수 배 빨라짐 |
+| WSL2에서 사내망 DNS 해석 실패 | `/etc/resolv.conf` 가 덮어쓰여 그럴 수 있음. `/etc/wsl.conf` 에 `[network] generateResolvConf = false` 추가 후 `wsl --shutdown` |
 
 <Quiz
   id="install-q1"
