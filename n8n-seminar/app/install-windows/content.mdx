@@ -129,6 +129,14 @@ node -v   # v20.x 확인
 ```bash
 npm config set registry https://repo.samsungds.net/artifactory/api/npm/npm-remote/
 npm config get registry
+vim ~/.npmrc
+# ~/.npmrc에 아래 내용 입력
+# registry=http://repo.samsungds.net/artifactory/api/npm/npm-remote/
+# strict-ssl=false
+# @artifact:registry=https://artifact.samsungds.net/artifactory/api/npm/npm-artifact-virtual/
+# https-proxy=http://nexus.adpaas.cloud.samsungds.net/
+# proxy=http://nexus.adpaas.cloud.samsungds.net/
+
 ```
 
 프록시가 필요한 환경이라면 `~/.npmrc` 에 `proxy`, `https-proxy` 를 추가합니다.
